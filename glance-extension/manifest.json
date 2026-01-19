@@ -1,0 +1,36 @@
+{
+    "manifest_version": 3,
+    "name": "Glance - AI Visual Assistant",
+    "version": "1.0.0",
+    "description": "画面の内容をAIが解析して読み上げます。視覚障害者の方向け。",
+    "permissions": [
+      "activeTab",
+      "sidePanel",
+      "offscreen",
+      "tts"
+    ],
+    "side_panel": {
+      "default_path": "index.html"
+    },
+    "action": {
+      "default_title": "Glanceを開く"
+    },
+    "background": {
+      "service_worker": "service-worker.js"
+    },
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://cdn.jsdelivr.net data: blob:; img-src 'self' data: blob:;"
+    },
+    "web_accessible_resources": [
+      {
+        "resources": ["models/*", "lib/*"],
+        "matches": ["<all_urls>"],
+        "extension_ids": []
+      }
+    ],
+    "icons": {
+      "16": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  }
