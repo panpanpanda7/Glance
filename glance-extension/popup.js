@@ -93,12 +93,25 @@ captureBtn.addEventListener('click', async () => {
     });
 
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const baseWidth = video.videoWidth;
+    const baseHeight = video.videoHeight;
+    const targetMaxWidth = 2560;
+    const targetMaxHeight = 1440;
+
+    const scaleUp = Math.max(1, Math.min(
+      targetMaxWidth / baseWidth,
+      targetMaxHeight / baseHeight
+    ));
+
+    canvas.width = Math.round(baseWidth * scaleUp);
+    canvas.height = Math.round(baseHeight * scaleUp);
+
     const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    const imageUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const imageUrl = canvas.toDataURL('image/jpeg', 0.95);
     
     stream.getTracks().forEach(track => track.stop());
     video.remove();
