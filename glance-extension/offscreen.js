@@ -75,6 +75,8 @@ async function analyzeImage(imageDataUrl) {
     
     try {
         const image = await RawImage.fromURL(imageDataUrl);
+        const captionTask = '<CAPTION>';
+        const detailTask = '<MORE_DETAILED_CAPTION>';
         const ocrTask = '<OCR>';
 
         // ============================================================
@@ -157,6 +159,8 @@ async function analyzeImage(imageDataUrl) {
                 .trim();
         };
 
+        const caption = await runTask(captionTask, 256);
+        const detailed = await runTask(detailTask, 256);
         const ocrText = await runTask(ocrTask, 512);
 
         const ocrLines = ocrText
@@ -189,7 +193,7 @@ async function analyzeImage(imageDataUrl) {
 
         const result = topLines.length > 0
             ? `画面内テキストの要約: ${topLines.join('、')}`
-            : '画面内テキストを抽出できませんでした。';
+            : (detailed || caption || '画面内テキストを抽出できませんでした。');
         
         console.log('[Offscreen] Result:', result);
         return result;
