@@ -75,8 +75,6 @@ async function analyzeImage(imageDataUrl) {
     
     try {
         const image = await RawImage.fromURL(imageDataUrl);
-        const captionTask = '<CAPTION>';
-        const detailTask = '<MORE_DETAILED_CAPTION>';
         const ocrTask = '<OCR>';
 
         // ============================================================
@@ -159,8 +157,6 @@ async function analyzeImage(imageDataUrl) {
                 .trim();
         };
 
-        const caption = await runTask(captionTask, 256);
-        const detailed = await runTask(detailTask, 256);
         const ocrText = await runTask(ocrTask, 512);
 
         const ocrLines = ocrText
@@ -171,10 +167,6 @@ async function analyzeImage(imageDataUrl) {
             .filter(line => !/^[A-Za-z]$/.test(line));
 
         const uniqueLines = Array.from(new Set(ocrLines));
-        const hasSearchMarkers = uniqueLines.some(line => /google|検索|search/i.test(line));
-        const hasUrlLike = uniqueLines.some(line => /\bhttps?:\/\/|\.[a-z]{2,}/i.test(line));
-        const hasSlideMarkers = uniqueLines.some(line => /agenda|summary|結論|目的|背景|結果|考察|売上|利益|前年比|前年|四半期|Q[1-4]|202[0-9]/i.test(line));
-
         const pickTopLines = (lines) => {
             const ranked = lines.map((line) => {
                 const hasRank = /^(?:\d+|[①-⑳])[\).、]?\s*/.test(line);
@@ -195,20 +187,9 @@ async function analyzeImage(imageDataUrl) {
 
         const topLines = pickTopLines(uniqueLines);
 
-        let result = caption;
-        if (!result || result.split(/\s+/).length < 3) {
-            result = detailed || caption;
-        }
-
-        if (hasSearchMarkers && hasUrlLike && topLines.length > 0) {
-            result = `表示されているのはWeb検索結果の画面です。上位の表示テキスト: ${topLines.join('、')}`;
-        } else if (hasSlideMarkers && topLines.length > 0) {
-            const prefix = result ? `${result} ` : '';
-            result = `${prefix}資料の要点: ${topLines.join('、')}`;
-        } else if (topLines.length > 0) {
-            const prefix = result ? `${result} ` : '';
-            result = `${prefix}画面内テキスト: ${topLines.join('、')}`;
-        }
+        const result = topLines.length > 0
+            ? `画面内テキストの要約: ${topLines.join('、')}`
+            : '画面内テキストを抽出できませんでした。';
         
         console.log('[Offscreen] Result:', result);
         return result;
