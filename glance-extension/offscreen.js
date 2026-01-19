@@ -1,6 +1,7 @@
 import { 
     Florence2ForConditionalGeneration, 
     AutoProcessor,
+    AutoTokenizer,
     RawImage,
     env 
 } from './lib/core.js';
@@ -15,6 +16,7 @@ console.log('[Offscreen] Model path:', env.localModelPath);
 
 let model = null;
 let processor = null;
+let tokenizer = null;
 let isLoading = false;
 
 function sendEvent(type, payload = {}) {
@@ -22,10 +24,10 @@ function sendEvent(type, payload = {}) {
 }
 
 async function initializeModel() {
-    if (model && processor) return { model, processor };
+    if (model && processor && tokenizer) return { model, processor, tokenizer };
     if (isLoading) {
         while (isLoading) await new Promise(r => setTimeout(r, 100));
-        return { model, processor };
+        return { model, processor, tokenizer };
     }
 
     isLoading = true;
@@ -36,6 +38,12 @@ async function initializeModel() {
         
         sendEvent('PROGRESS_UPDATE', { message: 'プロセッサを読み込み中...' });
         processor = await AutoProcessor.from_pretrained(modelId);
+        tokenizer = processor?.tokenizer;
+
+        if (!tokenizer) {
+            sendEvent('PROGRESS_UPDATE', { message: 'トークナイザを読み込み中...' });
+            tokenizer = await AutoTokenizer.from_pretrained(modelId);
+        }
 
         // デバッグ: プロセッサの中身を確認（後で役立ちます）
         console.log('[Offscreen] Processor internals:', Object.keys(processor));
@@ -52,7 +60,7 @@ async function initializeModel() {
         });
         
         console.log('[Offscreen] Model loaded');
-        return { model, processor };
+        return { model, processor, tokenizer };
     } catch (error) {
         console.error('[Offscreen] Load error:', error);
         throw error;
@@ -62,7 +70,7 @@ async function initializeModel() {
 }
 
 async function analyzeImage(imageDataUrl) {
-    const { model, processor } = await initializeModel();
+    const { model, processor, tokenizer } = await initializeModel();
     sendEvent('PROGRESS_UPDATE', { message: '画像を解析中...' });
     
     try {
@@ -88,7 +96,6 @@ async function analyzeImage(imageDataUrl) {
 
         // 3. テキスト処理 -> input_ids と attention_mask を生成
         // tokenizer が関数として呼べない環境があるため、フォールバックを用意
-        const tokenizer = processor.tokenizer;
         if (!tokenizer) {
             throw new Error('トークナイザが見つかりません。');
         }
