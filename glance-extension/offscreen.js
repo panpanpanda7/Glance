@@ -75,7 +75,7 @@ async function analyzeImage(imageDataUrl) {
     
     try {
         const image = await RawImage.fromURL(imageDataUrl);
-        const task = '<MORE_DETAILED_CAPTION>';
+        const task = '<CAPTION>';
         const prompts = [task];
 
         // ============================================================
@@ -143,10 +143,16 @@ async function analyzeImage(imageDataUrl) {
             skip_special_tokens: false 
         })[0];
         
+        const taskToken = task.replace(/[<>]/g, '');
         const caption = generatedText
             .replace('<s>', '')
             .replace('</s>', '')
             .replace(task, '')
+            .replace(taskToken, '')
+            .replace(/<loc_\d+>/g, '')
+            .replace(/<\/?poly>/g, '')
+            .replace(/<[^>]+>/g, '')
+            .replace(/\s+/g, ' ')
             .trim();
         
         console.log('[Offscreen] Result:', caption);
