@@ -1,0 +1,34 @@
+ee482697ca4e5f40c8c0532cb9e7830c408a48d7
+4f6d75dbbe1035bc93fe2d4998825e73f54ffdc8 
+3cd7635aafa7fa2aa330b6e2515e450658385dae 開発書類
+5d2b2064164c5a2ed3a0905097550881c5f3f910 .DS_Store
+4672c8efa240e02f92e6986384bac44a52bfec64 開発書類/1_企画_要件定義.md
+3cc1929677e368d786609ef0caa816feb1dd8b41 開発書類/2_環境構築_プロトタイピング.md
+11552314807a68ef0c70cd09026ae5732d84f7f8 開発書類/3_コア機能実装(キャプチャ).md
+fec59ffb1e988465ee546ed175b2d0e02214ea4a 開発書類/3.5_サイドパネル化.md
+da09b295a4432fdee579447dc25ae49e4c89e1bd download-model.sh
+f973abcc5f571c7801cf293bb8d4f00e062c31d0 glance-extension
+78b43d8afc8ba61b95e68d20975464aff9927b1c glance-extension/.DS_Store
+aee906af54ecc136520ab4077c810ac23142aa6c glance-extension/icon.png
+906086ea054e6f001e9c1d23fc414db83c2ecea7 glance-extension/index.html
+093c3399da519d4a7ab64d8c27c77bc578ce2a0d glance-extension/lib
+3ebd9ee7bff276bc79501ed397904f370adacaa8 glance-extension/lib/core.js
+7991faa9652ec88f0400c0c77f585b19799de66d glance-extension/manifest.json
+bab2c70be5fff64ae88ae6cfce6c579991e14e44 glance-extension/models
+a087b6246f3cef1f615cc00f23f7ffab8897778e glance-extension/models/onnx-community
+e6f30b6d33beff1bde93246299c857d5bbe353d9 glance-extension/models/onnx-community/Florence-2-base-ft
+f73f68ab97b370d4e70759c1be2967d891726ad8 glance-extension/models/onnx-community/Florence-2-base-ft/config.json
+44ad5ddf0872b609295be720feab64296f6bb238 glance-extension/models/onnx-community/Florence-2-base-ft/generation_config.json
+9c167bd7f3bed3d358e5aec30347ff406c976a79 glance-extension/models/onnx-community/Florence-2-base-ft/onnx
+f2361844d2d87a9dfb841153ebbe7e7bd61e5d3d glance-extension/models/onnx-community/Florence-2-base-ft/onnx/decoder_model_merged_q4.onnx
+6ce25274d233147b27519e07610f4a9aec6b311d glance-extension/models/onnx-community/Florence-2-base-ft/onnx/embed_tokens_q4.onnx
+873f0470daf36c1ed05c41e36aae9ab58ee94f25 glance-extension/models/onnx-community/Florence-2-base-ft/onnx/encoder_model_q4.onnx
+4c09a8dab8a1542030c8d0d82432c011770d5c38 glance-extension/models/onnx-community/Florence-2-base-ft/onnx/vision_encoder_fp16.onnx
+f0262fff97911d278f7ae3b3447f04c74a3c032c glance-extension/models/onnx-community/Florence-2-base-ft/preprocessor_config.json
+c6d6ca1e273fdccf972eeca8f0b75672f8ee575f glance-extension/models/onnx-community/Florence-2-base-ft/tokenizer_config.json
+c6919f318f277e660b557212ed1edaf28b037fc8 glance-extension/models/onnx-community/Florence-2-base-ft/tokenizer.json
+94a2f4fd50e976bda926c700291522ea1a79323f glance-extension/models/onnx-community/Florence-2-base-ft/vocab.json
+69dfc0620f8016a13b70397445b82997313158cb glance-extension/offscreen.html
+332ef9f8574dcebd81cecfe8631d7f786569f718 glance-extension/offscreen.js
+e55acbbb61db3b1701b8417e2743f99ca7eb93e9 glance-extension/popup.js
+5dfbf93d7fc19d78d242f45c2ee9fc8a63938e40 glance-extension/service-worker.js
