@@ -166,12 +166,34 @@ async function analyzeImage(imageDataUrl) {
         const ocrLines = ocrText
             .split(/\n|  +/)
             .map(line => line.trim())
-            .filter(line => line.length > 1);
+            .filter(line => line.length > 2)
+            .filter(line => !/^[\W_]+$/.test(line))
+            .filter(line => !/^[A-Za-z]$/.test(line));
 
         const uniqueLines = Array.from(new Set(ocrLines));
-        const topLines = uniqueLines.slice(0, 6);
         const hasSearchMarkers = uniqueLines.some(line => /google|検索|search/i.test(line));
         const hasUrlLike = uniqueLines.some(line => /\bhttps?:\/\/|\.[a-z]{2,}/i.test(line));
+        const hasSlideMarkers = uniqueLines.some(line => /agenda|summary|結論|目的|背景|結果|考察|売上|利益|前年比|前年|四半期|Q[1-4]|202[0-9]/i.test(line));
+
+        const pickTopLines = (lines) => {
+            const ranked = lines.map((line) => {
+                const hasRank = /^(?:\d+|[①-⑳])[\).、]?\s*/.test(line);
+                const hasPercent = /[%％]/.test(line);
+                const hasNumber = /\d/.test(line);
+                const lengthScore = Math.min(line.length, 80);
+                return {
+                    line,
+                    score: (hasRank ? 40 : 0) + (hasPercent ? 20 : 0) + (hasNumber ? 10 : 0) + lengthScore,
+                };
+            });
+
+            return ranked
+                .sort((a, b) => b.score - a.score)
+                .map(entry => entry.line)
+                .slice(0, 6);
+        };
+
+        const topLines = pickTopLines(uniqueLines);
 
         let result = caption;
         if (!result || result.split(/\s+/).length < 3) {
@@ -180,6 +202,9 @@ async function analyzeImage(imageDataUrl) {
 
         if (hasSearchMarkers && hasUrlLike && topLines.length > 0) {
             result = `表示されているのはWeb検索結果の画面です。上位の表示テキスト: ${topLines.join('、')}`;
+        } else if (hasSlideMarkers && topLines.length > 0) {
+            const prefix = result ? `${result} ` : '';
+            result = `${prefix}資料の要点: ${topLines.join('、')}`;
         } else if (topLines.length > 0) {
             const prefix = result ? `${result} ` : '';
             result = `${prefix}画面内テキスト: ${topLines.join('、')}`;
