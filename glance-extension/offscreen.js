@@ -75,8 +75,7 @@ async function analyzeImage(imageDataUrl) {
     
     try {
         const image = await RawImage.fromURL(imageDataUrl);
-        const task = '<CAPTION>';
-        const prompts = [task];
+        const captionTask = '<CAPTION>';
 
         // ============================================================
         // 【最終解決策】 手動組み立て方式 (Manual Assembly)
@@ -106,57 +105,77 @@ async function analyzeImage(imageDataUrl) {
             return_tensors: 'tensor' // WebGPU用にTensorオブジェクトで受け取る
         };
 
-        let text_inputs;
-        if (typeof tokenizer === 'function') {
-            text_inputs = tokenizer(prompts, tokenizeOptions);
-        } else if (typeof tokenizer._call === 'function') {
-            text_inputs = tokenizer._call(prompts, tokenizeOptions);
-        } else {
-            throw new Error('トークナイザが関数として利用できません。');
-        }
-
-        // 4. 合体
-        const inputs = {
-            ...image_inputs, // pixel_values
-            ...text_inputs,  // input_ids, attention_mask
-        };
-
-        // デバッグ: ここで attention_mask があることを確認
-        console.log('[Offscreen] Inputs assembled:', {
-            keys: Object.keys(inputs),
-            has_mask: !!inputs.attention_mask,
-            mask_type: inputs.attention_mask?.type
-        });
-
-        // 5. 推論実行
-        const generatedIds = await model.generate({
-            ...inputs,
-            max_new_tokens: 256,
-        });
-        
-        // 6. デコード
         const decode = tokenizer.batch_decode
             ? tokenizer.batch_decode.bind(tokenizer)
             : (ids, options) => ids.map(entry => tokenizer.decode(entry, options));
 
-        const generatedText = decode(generatedIds, { 
-            skip_special_tokens: false 
-        })[0];
+        const tokenize = (prompts) => {
+            if (typeof tokenizer === 'function') {
+                return tokenizer(prompts, tokenizeOptions);
+            }
+            if (typeof tokenizer._call === 'function') {
+                return tokenizer._call(prompts, tokenizeOptions);
+            }
+            throw new Error('トークナイザが関数として利用できません。');
+        };
+
+        const runTask = async (task, maxTokens = 256) => {
+            const prompts = [task];
+            const text_inputs = tokenize(prompts);
+
+            const inputs = {
+                ...image_inputs, // pixel_values
+                ...text_inputs,  // input_ids, attention_mask
+            };
+
+            console.log('[Offscreen] Inputs assembled:', {
+                keys: Object.keys(inputs),
+                has_mask: !!inputs.attention_mask,
+                mask_type: inputs.attention_mask?.type,
+                task
+            });
+
+            const generatedIds = await model.generate({
+                ...inputs,
+                max_new_tokens: maxTokens,
+            });
+
+            const generatedText = decode(generatedIds, { 
+                skip_special_tokens: false 
+            })[0];
+
+            const taskToken = task.replace(/[<>]/g, '');
+            return generatedText
+                .replace('<s>', '')
+                .replace('</s>', '')
+                .replace(task, '')
+                .replace(taskToken, '')
+                .replace(/<loc_\d+>/g, '')
+                .replace(/<\/?poly>/g, '')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+
+        const caption = await runTask(captionTask, 256);
+        let result = caption;
+
+        if (!caption || caption.split(/\s+/).length < 3) {
+            const ocrText = await runTask('<OCR>', 512);
+            const ocrLines = ocrText
+                .split(/\n|  +/)
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+
+            const topLines = Array.from(new Set(ocrLines)).slice(0, 5);
+
+            if (topLines.length > 0) {
+                result = `表示されているのはWeb検索結果の画面です。上位の表示テキスト: ${topLines.join('、')}`;
+            }
+        }
         
-        const taskToken = task.replace(/[<>]/g, '');
-        const caption = generatedText
-            .replace('<s>', '')
-            .replace('</s>', '')
-            .replace(task, '')
-            .replace(taskToken, '')
-            .replace(/<loc_\d+>/g, '')
-            .replace(/<\/?poly>/g, '')
-            .replace(/<[^>]+>/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        
-        console.log('[Offscreen] Result:', caption);
-        return caption;
+        console.log('[Offscreen] Result:', result);
+        return result;
         
     } catch (error) {
         console.error('[Offscreen] Analyze error:', error);
