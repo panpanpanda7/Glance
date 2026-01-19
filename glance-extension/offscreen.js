@@ -34,7 +34,7 @@ async function initializeModel() {
     sendEvent('PROGRESS_UPDATE', { message: 'AIモデルを読み込み中...\n（初回は1-2分かかります）' });
 
     try {
-        const modelId = 'onnx-community/Florence-2-base-ft';
+        const modelId = 'onnx-community/Florence-2-large-ft';
         
         sendEvent('PROGRESS_UPDATE', { message: 'プロセッサを読み込み中...' });
         processor = await AutoProcessor.from_pretrained(modelId);
