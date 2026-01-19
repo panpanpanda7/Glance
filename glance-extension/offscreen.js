@@ -87,12 +87,26 @@ async function analyzeImage(imageDataUrl) {
         const image_inputs = await vision_processor([image]);
 
         // 3. テキスト処理 -> input_ids と attention_mask を生成
-        // tokenizer を直接呼ぶと、確実に attention_mask が生成されます
-        const text_inputs = processor.tokenizer(prompts, {
+        // tokenizer が関数として呼べない環境があるため、フォールバックを用意
+        const tokenizer = processor.tokenizer;
+        if (!tokenizer) {
+            throw new Error('トークナイザが見つかりません。');
+        }
+
+        const tokenizeOptions = {
             padding: true,
             truncation: true,
             return_tensors: 'tensor' // WebGPU用にTensorオブジェクトで受け取る
-        });
+        };
+
+        let text_inputs;
+        if (typeof tokenizer === 'function') {
+            text_inputs = tokenizer(prompts, tokenizeOptions);
+        } else if (typeof tokenizer._call === 'function') {
+            text_inputs = tokenizer._call(prompts, tokenizeOptions);
+        } else {
+            throw new Error('トークナイザが関数として利用できません。');
+        }
 
         // 4. 合体
         const inputs = {
@@ -114,7 +128,11 @@ async function analyzeImage(imageDataUrl) {
         });
         
         // 6. デコード
-        const generatedText = processor.tokenizer.batch_decode(generatedIds, { 
+        const decode = tokenizer.batch_decode
+            ? tokenizer.batch_decode.bind(tokenizer)
+            : (ids, options) => ids.map(entry => tokenizer.decode(entry, options));
+
+        const generatedText = decode(generatedIds, { 
             skip_special_tokens: false 
         })[0];
         
