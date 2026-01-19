@@ -76,6 +76,8 @@ async function analyzeImage(imageDataUrl) {
     try {
         const image = await RawImage.fromURL(imageDataUrl);
         const captionTask = '<CAPTION>';
+        const detailTask = '<MORE_DETAILED_CAPTION>';
+        const ocrTask = '<OCR>';
 
         // ============================================================
         // 【最終解決策】 手動組み立て方式 (Manual Assembly)
@@ -158,20 +160,29 @@ async function analyzeImage(imageDataUrl) {
         };
 
         const caption = await runTask(captionTask, 256);
+        const detailed = await runTask(detailTask, 256);
+        const ocrText = await runTask(ocrTask, 512);
+
+        const ocrLines = ocrText
+            .split(/\n|  +/)
+            .map(line => line.trim())
+            .filter(line => line.length > 1);
+
+        const uniqueLines = Array.from(new Set(ocrLines));
+        const topLines = uniqueLines.slice(0, 6);
+        const hasSearchMarkers = uniqueLines.some(line => /google|検索|search/i.test(line));
+        const hasUrlLike = uniqueLines.some(line => /\bhttps?:\/\/|\.[a-z]{2,}/i.test(line));
+
         let result = caption;
+        if (!result || result.split(/\s+/).length < 3) {
+            result = detailed || caption;
+        }
 
-        if (!caption || caption.split(/\s+/).length < 3) {
-            const ocrText = await runTask('<OCR>', 512);
-            const ocrLines = ocrText
-                .split(/\n|  +/)
-                .map(line => line.trim())
-                .filter(line => line.length > 0);
-
-            const topLines = Array.from(new Set(ocrLines)).slice(0, 5);
-
-            if (topLines.length > 0) {
-                result = `表示されているのはWeb検索結果の画面です。上位の表示テキスト: ${topLines.join('、')}`;
-            }
+        if (hasSearchMarkers && hasUrlLike && topLines.length > 0) {
+            result = `表示されているのはWeb検索結果の画面です。上位の表示テキスト: ${topLines.join('、')}`;
+        } else if (topLines.length > 0) {
+            const prefix = result ? `${result} ` : '';
+            result = `${prefix}画面内テキスト: ${topLines.join('、')}`;
         }
         
         console.log('[Offscreen] Result:', result);
