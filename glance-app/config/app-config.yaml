@@ -1,0 +1,24 @@
+# アプリケーション設定
+app:
+  name: Glance
+  version: 1.0.0
+  
+  # ホットキー設定（Electronのacceleratorフォーマット）
+  hotkey: CommandOrControl+Shift+G
+  
+  # TTS設定
+  tts:
+    speed: 1.0      # 音声速度（0.5-2.0）
+    volume: 1.0     # 音量（0.0-1.0）
+    language: ja-JP # 言語コード
+    
+  # ウィンドウ設定
+  window:
+    width: 400
+    height: 300
+    alwaysOnTop: false
+    
+  # その他
+  autoStartup: false
+  showNotifications: true
+  logLevel: info

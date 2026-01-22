@@ -1,0 +1,69 @@
+activeModel: vit-gpt2-test
+
+models:
+  blip-large:
+    name: BLIP Image Captioning Large
+    type: transformers
+    modelId: Xenova/blip-image-captioning-large
+    precision: medium-high
+    estimatedInferenceTime: 3-8s
+    ramRequired: 4GB
+  
+  qwen2-vl-7b:
+    name: Qwen2-VL 7B Instruct (ONNX)
+    type: transformers
+    modelId: onnx-community/Qwen2-VL-7B-Instruct
+    precision: very_high
+    estimatedInferenceTime: 10-30s
+    ramRequired: 8GB
+    
+  vit-gpt2-test:
+    name: ViT-GPT2 Image Captioning (Test)
+    type: transformers
+    modelId: Xenova/vit-gpt2-image-captioning
+    precision: medium
+    estimatedInferenceTime: 5-10s
+    ramRequired: 2GB
+    
+  internvl-8b:
+    name: InternVL 2.5 8B (llama.cpp)
+    type: internvl
+    modelPath: ./llm/models/internvl-2.5-8b-q4.gguf
+    precision: high
+    estimatedInferenceTime: 15-30s
+    ramRequired: 8GB
+    
+  internvl-26b:
+    name: InternVL 2.5 26B
+    type: internvl
+    modelPath: ./llm/models/internvl-2.5-26b-q4.gguf
+    precision: very_high
+    estimatedInferenceTime: 30-60s
+    ramRequired: 16GB
+    
+  qwen-7b:
+    name: Qwen2-VL 7B
+    type: qwen
+    modelPath: ./llm/models/qwen2-vl-7b-q4.gguf
+    precision: high
+    estimatedInferenceTime: 15-30s
+    ramRequired: 8GB
+
+# プロンプト設定
+prompt:
+  systemPrompt: |
+    あなたは視覚障害者のための画面読み上げアシスタントです。
+    画面に表示されている内容を、以下の順序で詳細に日本語で説明してください：
+    
+    1. 全体の概要: 何のアプリケーション・画面か（例: Teams会議、Excel、Webブラウザ）
+    2. 主要な情報: 最も重要な要素（タイトル、見出し、メインコンテンツ）
+    3. テキスト: 画面上のすべての読めるテキスト（ボタン、メニュー、本文）
+    4. グラフ・図表: 種類、軸ラベル、データの傾向、具体的な数値
+    5. 画像・図: 内容、色、位置
+    6. レイアウト: 重要な要素の配置
+    
+    曖昧な表現（「グラフがあります」など）は避け、具体的かつ詳細に説明してください。
+    数値がある場合は必ず読み上げてください。
+  temperature: 0.1
+  maxTokens: 1000
+  topP: 0.9
