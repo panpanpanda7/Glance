@@ -1,0 +1,51 @@
+# Python
+python-backend/venv/
+python-backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Node.js
+electron/node_modules/
+electron/dist/
+**/node_modules/
+
+# Models（大容量ファイル）
+models/*
+!models/*.py
+transformers/*
+!transformers/*.py
+
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.gguf
+
+# Python Runtime（配布用）
+python-runtime/
+
+# ログ
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ビルド成果物
+electron/dist/
+build/
+packaging/dist/
+
+# テスト
+test_images/
+*.png
+*.jpg
+*.jpeg

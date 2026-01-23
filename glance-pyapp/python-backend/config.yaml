@@ -1,0 +1,59 @@
+# Glance Python Backend Configuration
+# モデル設定とプロンプト
+
+activeModel: internvl-4b
+
+models:
+  internvl-26b:
+    name: InternVL 2.5 26B
+    type: internvl
+    path: ../models/InternVL2.5-26B
+    precision: maximum
+    estimatedInferenceTime: 60-180s (CPU), 15-40s (GPU)
+    ramRequired: 32GB (CPU), 16GB (GPU)
+    
+  internvl-8b:
+    name: InternVL 2.5 8B
+    type: internvl
+    path: ../models/InternVL2.5-8B
+    precision: very_high
+    estimatedInferenceTime: 30-60s (CPU), 5-15s (GPU)
+    ramRequired: 16GB (CPU), 8GB (GPU)
+    
+  internvl-4b:
+    name: InternVL 2.5 4B
+    type: internvl
+    path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/InternVL2.5-4B
+    precision: high
+    estimatedInferenceTime: 15-30s (CPU), 3-8s (GPU)
+    ramRequired: 8GB (CPU), 4GB (GPU)
+    
+  qwen2-vl-7b:
+    name: Qwen2-VL 7B Instruct
+    type: qwen
+    path: ../models/Qwen2-VL-7B-Instruct
+    precision: very_high
+    estimatedInferenceTime: 30-60s (CPU), 5-15s (GPU)
+    ramRequired: 16GB (CPU), 8GB (GPU)
+
+# プロンプト設定
+prompt:
+  systemPrompt: |
+    あなたは視覚障害者のための画面読み上げアシスタントです。
+    画面に表示されている内容を、全体の情報がわかるように要約してください。
+    
+    曖昧な表現（「グラフがあります」など）は避け、具体的かつ詳細に説明してください。
+    その際、重要な情報を見逃さないように注意してください。
+    また、画像を精緻に確認し誤った情報は提供しないでください。
+  
+  temperature: 0.1
+  maxTokens: 1000
+  topP: 0.9
+  repetition_penalty: 1.2  # 繰り返しにペナルティ（1.0-2.0、デフォルト1.0）
+  no_repeat_ngram_size: 3  # 同じN-gramの繰り返しを防ぐ
+
+# サーバー設定
+server:
+  host: 127.0.0.1
+  port: 5001
+  debug: false
