@@ -116,7 +116,9 @@ def analyze():
         options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', config['prompt']['maxTokens']),
-            'top_p': data.get('top_p', config['prompt']['topP'])
+            'top_p': data.get('top_p', config['prompt']['topP']),
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.0)),
+            'no_repeat_ngram_size': data.get('no_repeat_ngram_size', config['prompt'].get('no_repeat_ngram_size', 0))
         }
         
         print(f"\n📸 画像分析リクエスト受信")
