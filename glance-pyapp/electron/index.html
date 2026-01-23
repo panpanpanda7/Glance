@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" 
+        content="default-src 'self'; 
+                 script-src 'self' 'unsafe-inline'; 
+                 style-src 'self' 'unsafe-inline';">
+  <title>Glance - AI画面読み上げ</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      padding: 20px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .container {
+      max-width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 12px;
+      opacity: 0.8;
+      margin-top: -5px;
+      margin-bottom: 10px;
+    }
+
+    .status-card {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-dot.idle {
+      background-color: #10b981;
+    }
+
+    .status-dot.loading {
+      background-color: #f59e0b;
+    }
+
+    .status-dot.capturing,
+    .status-dot.analyzing,
+    .status-dot.speaking {
+      background-color: #3b82f6;
+    }
+
+    .status-dot.error {
+      background-color: #ef4444;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      flex: 1;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #fff;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .result-card {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .result-text {
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .timestamp {
+      font-size: 12px;
+      opacity: 0.7;
+      margin-top: 10px;
+    }
+
+    .model-info {
+      font-size: 12px;
+      opacity: 0.8;
+      text-align: center;
+      margin-top: 5px;
+    }
+
+    .hotkey-hint {
+      text-align: center;
+      font-size: 14px;
+      opacity: 0.8;
+      margin-top: 10px;
+    }
+
+    .no-result {
+      text-align: center;
+      opacity: 0.5;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>👁️ Glance</h1>
+    <div class="subtitle">Powered by InternVL 2.5 & Python API</div>
+    
+    <div class="status-card">
+      <div class="status-indicator">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">起動中...</span>
+      </div>
+      <div class="model-info" id="model-info">Pythonバックエンド起動中...</div>
+    </div>
+
+    <div class="controls">
+      <button class="btn-primary" id="capture-btn">
+        📸 画面を読み上げ
+      </button>
+      <button class="btn-secondary" id="stop-btn">
+        ⏹️ 停止
+      </button>
+    </div>
+
+    <div class="hotkey-hint">
+      ⌨️ ホットキー: <strong>Cmd+Shift+G</strong> (Ctrl+Shift+G on Windows)
+    </div>
+
+    <div class="result-card">
+      <div class="no-result" id="no-result">
+        画面をキャプチャすると、ここに詳細な説明が表示されます
+      </div>
+      <div class="result-text" id="result-text" style="display: none;"></div>
+      <div class="timestamp" id="timestamp" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "name": "glance-pyapp",
+  "version": "1.0.0",
+  "description": "Glance - 視覚障害者向けPC画面読み上げアプリ（Python API版）",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
+  },
+  "keywords": [
+    "accessibility",
+    "screen-reader",
+    "vision",
+    "AI",
+    "InternVL"
+  ],
+  "author": "Glance Team",
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "screenshot-desktop": "^1.15.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.glance.pyapp",
+    "productName": "Glance",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin"
+    ],
+    "extraResources": [
+      {
+        "from": "../python-backend",
+        "to": "python-backend",
+        "filter": ["**/*", "!venv/**", "!__pycache__/**"]
+      },
+      {
+        "from": "../python-runtime",
+        "to": "python-runtime",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../models",
+        "to": "models",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities"
+    }
+  }
+}
