@@ -1,1 +1,7 @@
 glance-extension/models/onnx-community/
+
+# Models（大容量ファイル）
+glance-pyapp/python-backend/models/*
+!glance-pyapp/python-backend/models/*.py
+glance-pyapp/python-backend/transformers_modules/*
+!glance-pyapp/python-backend/transformers_modules/.gitkeep
