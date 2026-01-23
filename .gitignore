@@ -7,9 +7,7 @@ glance-pyapp/python-backend/transformers_modules/*
 
 # Development files
 開発書類/
-allfiles.txt
 .DS_Store
 *.pyc
 __pycache__/
-.venv/
-venv/
+glance-pyapp/python-backend/venv/
