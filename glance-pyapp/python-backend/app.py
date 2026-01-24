@@ -112,6 +112,21 @@ def analyze():
         # デフォルトプロンプトを使用
         prompt = data.get('prompt', config['prompt']['systemPrompt'])
         
+        # プロンプトタイプを取得（デフォルトは 'standard'）
+        prompt_type = data.get('promptType', 'standard')
+        
+        # プロンプトタイプに応じてプロンプトを選択（使用頻度順）
+        if prompt_type == 'standard':  # 最も頻度が高い
+            prompt = data.get('prompt', config['prompt']['systemPrompt'])
+        elif prompt_type == 'detailed':
+            prompt = data.get('prompt', config['prompt']['detailedPrompt'])
+        elif prompt_type == 'question':  # 将来の機能
+            question_text = data.get('question', '')
+            prompt = config['prompt']['questionPrompt'].format(question=question_text)
+        else:
+            # 未知のプロンプトタイプの場合はデフォルト
+            prompt = data.get('prompt', config['prompt']['systemPrompt'])
+            
         # パラメータ
         options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
@@ -123,6 +138,7 @@ def analyze():
         
         print(f"\n📸 画像分析リクエスト受信")
         print(f"   画像サイズ: {len(image_base64)} bytes (base64)")
+        print(f"   プロンプトタイプ: {prompt_type}")
         print(f"   プロンプト長: {len(prompt)} 文字")
         
         # Base64をPIL Imageに変換

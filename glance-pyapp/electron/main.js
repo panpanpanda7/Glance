@@ -14,6 +14,7 @@ let tray = null;
 let pythonProcess = null;
 let isProcessing = false;
 let isPythonReady = false;
+let lastCapturedImageBase64 = null; // 直前の画像（Base64エンコード済み）
 
 const PYTHON_API_URL = 'http://127.0.0.1:5001';
 
@@ -155,6 +156,10 @@ function createTray() {
       label: '画面を読み上げ (Cmd+Shift+G)',
       click: handleScreenCapture
     },
+    {
+      label: '詳細分析 (Cmd+Shift+D)',
+      click: handleDetailedAnalysis
+    },
     { type: 'separator' },
     {
       label: '読み上げを停止',
@@ -179,14 +184,19 @@ function createTray() {
  * グローバルホットキーを登録
  */
 function registerHotkeys() {
-  const hotkey = 'CommandOrControl+Shift+G';
+  // 最も使用頻度の高いキャプチャ用ショートカット
+  const captureHotkey = 'CommandOrControl+Shift+G';
+  const success1 = globalShortcut.register(captureHotkey, handleScreenCapture);
   
-  const success = globalShortcut.register(hotkey, handleScreenCapture);
+  // 2番目に使用頻度の高い詳細分析用ショートカット
+  const detailedHotkey = 'CommandOrControl+Shift+D';
+  const success2 = globalShortcut.register(detailedHotkey, handleDetailedAnalysis);
   
-  if (success) {
-    console.log(`✅ ホットキーを登録しました: ${hotkey}`);
+  // 結果のログ
+  if (success1 && success2) {
+    console.log(`✅ ホットキーを登録しました: ${captureHotkey}, ${detailedHotkey}`);
   } else {
-    console.error(`❌ ホットキーの登録に失敗しました: ${hotkey}`);
+    console.error(`❌ ホットキーの登録に失敗しました`);
   }
 }
 
@@ -222,6 +232,7 @@ async function handleScreenCapture() {
     }
 
     const screenshot = await captureFullScreen();
+    lastCapturedImageBase64 = screenshot.toString('base64'); // エンコード済みデータを保存
     
     // 分析中
     if (mainWindow) {
@@ -231,12 +242,13 @@ async function handleScreenCapture() {
       });
     }
 
-    // Python APIに送信
+    // Python APIに送信（標準プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image: screenshot.toString('base64')
+        image: lastCapturedImageBase64,
+        promptType: 'standard'
       })
     });
 
@@ -254,7 +266,8 @@ async function handleScreenCapture() {
       mainWindow.webContents.send('analysis-result', {
         text: description,
         timestamp: new Date().toISOString(),
-        model: data.model
+        model: data.model,
+        isDetailed: false
       });
     }
 
@@ -267,7 +280,7 @@ async function handleScreenCapture() {
     }
 
     await speak(description, {
-      speed: 1.5,   // 読み上げ速度（0.5-2.0）
+      speed: 1.0,   // 読み上げ速度（0.5-2.0）
                     // 0.5 = 遅い、1.0 = 標準、1.5 = 速い、2.0 = 非常に速い
       volume: 1.0,  // 音量（0.0-1.0）
       language: 'ja-JP'  // 言語
@@ -285,6 +298,113 @@ async function handleScreenCapture() {
     
   } catch (error) {
     console.error('❌ 処理中にエラーが発生しました:', error);
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: `エラー: ${error.message}`
+      });
+    }
+  } finally {
+    isProcessing = false;
+  }
+}
+
+/**
+ * 詳細分析処理
+ */
+async function handleDetailedAnalysis() {
+  if (!lastCapturedImageBase64) {
+    console.log('⚠️ 分析する画像がありません。まず画面をキャプチャしてください。');
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: '画像がありません。先に画面キャプチャを行ってください。'
+      });
+    }
+    return;
+  }
+  
+  if (isProcessing) {
+    console.log('⚠️ 既に処理中です');
+    return;
+  }
+  
+  if (!isPythonReady) {
+    console.log('⚠️ Pythonバックエンドが準備できていません');
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: 'Pythonバックエンドが起動していません'
+      });
+    }
+    return;
+  }
+  
+  isProcessing = true;
+  
+  try {
+    // 詳細分析中
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'analyzing',
+        message: '画面を詳細分析中...'
+      });
+    }
+    
+    // API送信（詳細プロンプト）
+    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: lastCapturedImageBase64,
+        promptType: 'detailed'
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error);
+    }
+    
+    const description = data.result;
+    console.log('📝 詳細分析の結果:', description);
+    
+    // 結果を表示
+    if (mainWindow) {
+      mainWindow.webContents.send('analysis-result', {
+        text: description,
+        timestamp: new Date().toISOString(),
+        model: data.model,
+        isDetailed: true
+      });
+    }
+    
+    // 読み上げ中
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'speaking',
+        message: '詳細情報を読み上げ中...'
+      });
+    }
+    
+    await speak(description, {
+      speed: 1.5,
+      volume: 1.0,
+      language: 'ja-JP'
+    });
+    
+    // 完了
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'idle',
+        message: '待機中'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ 詳細分析中にエラーが発生しました:', error);
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -417,4 +537,10 @@ ipcMain.handle('get-available-models', async () => {
   } catch (error) {
     return { error: error.message };
   }
+});
+
+// 詳細分析
+ipcMain.handle('detailed-analysis', async () => {
+  await handleDetailedAnalysis();
+  return { success: true };
 });

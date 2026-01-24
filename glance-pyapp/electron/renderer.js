@@ -8,6 +8,7 @@ const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const modelInfo = document.getElementById('model-info');
 const captureBtn = document.getElementById('capture-btn');
+const detailedBtn = document.getElementById('detailed-btn'); // 詳細分析ボタン
 const stopBtn = document.getElementById('stop-btn');
 const noResult = document.getElementById('no-result');
 const resultText = document.getElementById('result-text');
@@ -27,9 +28,13 @@ window.electronAPI.onStatusUpdate((data) => {
   if (data.status === 'capturing' || data.status === 'analyzing' || data.status === 'speaking') {
     captureBtn.disabled = true;
     captureBtn.style.opacity = '0.5';
+    detailedBtn.disabled = true;
+    detailedBtn.style.opacity = '0.5';
   } else {
     captureBtn.disabled = false;
     captureBtn.style.opacity = '1';
+    detailedBtn.disabled = false;
+    detailedBtn.style.opacity = '1';
   }
 });
 
@@ -46,7 +51,11 @@ window.electronAPI.onAnalysisResult((data) => {
   
   // モデル情報も表示
   if (data.model) {
-    const modelText = `\n\n---\nモデル: ${data.model.name} (${data.model.device})`;
+    let modelText = `\n\n---\nモデル: ${data.model.name} (${data.model.device})`;
+    // 詳細分析結果かどうかを表示
+    if (data.isDetailed) {
+      modelText += ' [詳細モード]';
+    }
     resultText.textContent += modelText;
   }
   
@@ -82,6 +91,21 @@ captureBtn.addEventListener('click', async () => {
   }
 });
 
+// 詳細分析ボタンのクリック
+detailedBtn.addEventListener('click', async () => {
+  console.log('Detailed analysis button clicked');
+  try {
+    if (!lastCaptureExist()) {
+      statusDot.className = 'status-dot error';
+      statusText.textContent = '画像がありません。先に画面キャプチャを行ってください。';
+      return;
+    }
+    await window.electronAPI.detailedAnalysis();
+  } catch (error) {
+    console.error('Detailed analysis error:', error);
+  }
+});
+
 // 停止ボタンのクリック
 stopBtn.addEventListener('click', async () => {
   console.log('Stop button clicked');
@@ -93,6 +117,12 @@ stopBtn.addEventListener('click', async () => {
     console.error('Stop error:', error);
   }
 });
+
+// 直前の画像キャプチャが存在するかチェック
+function lastCaptureExist() {
+  // 結果テキストが非表示であれば画像キャプチャが行われていない
+  return resultText.style.display !== 'none';
+}
 
 // ページロード時
 window.addEventListener('DOMContentLoaded', () => {

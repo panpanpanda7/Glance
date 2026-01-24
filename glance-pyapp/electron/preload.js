@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 画面キャプチャ
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
   
+  // 詳細分析
+  detailedAnalysis: () => ipcRenderer.invoke('detailed-analysis'),
+  
   // 読み上げ停止
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   
