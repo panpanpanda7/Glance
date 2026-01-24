@@ -72,7 +72,7 @@ async function startPythonBackend() {
 async function waitForPythonBackend() {
   console.log('⏳ Pythonバックエンドの起動を待機中...');
   
-  const maxRetries = 60; // 60秒待つ
+  const maxRetries = 300; // 300秒待つ
   
   for (let i = 0; i < maxRetries; i++) {
     try {

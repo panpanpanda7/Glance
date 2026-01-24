@@ -1,7 +1,7 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-activeModel: internvl-1b
+activeModel: internvl-4b
 
 models:
   internvl-3_5_4b:
@@ -15,7 +15,7 @@ models:
   internvl-26b:
     name: InternVL 2.5 26B
     type: internvl
-    path: ../models/InternVL2.5-26B
+    path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/InternVL2.5-26B
     precision: maximum
     estimatedInferenceTime: 60-180s (CPU), 15-40s (GPU)
     ramRequired: 32GB (CPU), 16GB (GPU)

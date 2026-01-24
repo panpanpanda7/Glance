@@ -27,7 +27,7 @@ class InternVLModel(VisionLanguageModel):
         print(f"🖥️  デバイス: {self.device}")
     
     def _register_model_modules(self):
-        """カスタムモデルコードをインポートパスに登録"""
+        """カスタムモデルコードをインポートパスに登録（柔軟なバージョン）"""
         try:
             # モデルフォルダのPythonパスを追加
             model_path = os.path.abspath(self.model_path)
@@ -46,26 +46,26 @@ class InternVLModel(VisionLanguageModel):
             with open(os.path.join(internvl2_dir, '__init__.py'), 'w') as f:
                 f.write('# Auto-generated init file\n')
             
-            # モデルコードをコピー
-            model_files = [
-                'configuration_intern_vit.py',
-                'configuration_internvl_chat.py',
-                'modeling_intern_vit.py',
-                'modeling_internvl_chat.py',
-                'conversation.py'
-            ]
+            # モデルフォルダ内の全てのPythonファイルを自動検出してコピー
+            print(f"  📝 モデルファイルをコピー中...")
+            copied_count = 0
             
-            for file in model_files:
-                src_path = os.path.join(model_path, file)
-                if os.path.exists(src_path):
-                    # ファイルを読み取り
+            for file in os.listdir(model_path):
+                if file.endswith('.py'):
+                    src_path = os.path.join(model_path, file)
+                    dst_path = os.path.join(internvl2_dir, file)
+                    
+                    # ファイルをコピー
                     with open(src_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                     
-                    # ファイルを書き込み
-                    dst_path = os.path.join(internvl2_dir, file)
                     with open(dst_path, 'w', encoding='utf-8') as f:
                         f.write(content)
+                    
+                    print(f"    ✓ {file} をコピーしました")
+                    copied_count += 1
+            
+            print(f"  ✅ {copied_count}個のPythonファイルをコピーしました")
             
             # Pythonパスに追加
             sys.path.insert(0, os.path.dirname(os.path.dirname(model_path)))
