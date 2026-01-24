@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 
 // グローバル変数
 let mainWindow = null;
+let questionOverlayWindow = null; // 質問入力用の透明オーバーレイウィンドウ
 let tray = null;
 let pythonProcess = null;
 let isProcessing = false;
@@ -124,6 +125,77 @@ function createWindow() {
 }
 
 /**
+ * 質問用透明オーバーレイウィンドウを作成
+ */
+function createQuestionOverlayWindow() {
+  if (questionOverlayWindow) {
+    return; // 既に存在する場合は何もしない
+  }
+
+  questionOverlayWindow = new BrowserWindow({
+    width: 500,
+    height: 80,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    focusable: true,
+    show: false,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    type: 'panel', // パネルタイプ（macOSで有効）
+    vibrancy: 'under-window', // macOSのvibrancy効果
+    webPreferences: {
+      preload: path.join(__dirname, 'question-overlay-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    }
+  });
+
+  questionOverlayWindow.loadFile('question-overlay.html');
+
+  questionOverlayWindow.on('closed', () => {
+    questionOverlayWindow = null;
+  });
+
+  // 画面の中央上部に配置
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width } = primaryDisplay.workAreaSize;
+  questionOverlayWindow.setPosition(Math.round((width - 600) / 2), 100);
+}
+
+/**
+ * 質問オーバーレイウィンドウを表示
+ */
+function showQuestionOverlay() {
+  if (!lastCapturedImageBase64) {
+    console.log('⚠️ 分析する画像がありません。まず画面をキャプチャしてください。');
+    return;
+  }
+
+  createQuestionOverlayWindow();
+  
+  // showInactiveを使用してアクティブにせずに表示
+  questionOverlayWindow.showInactive();
+  
+  // 少し遅延してからフォーカスを当てる（画面切り替えを最小限に）
+  setTimeout(() => {
+    questionOverlayWindow.focus();
+  }, 50);
+}
+
+/**
+ * 質問オーバーレイウィンドウを非表示
+ */
+function hideQuestionOverlay() {
+  if (questionOverlayWindow) {
+    questionOverlayWindow.hide();
+  }
+}
+
+/**
  * システムトレイアイコンを作成
  */
 function createTray() {
@@ -192,9 +264,13 @@ function registerHotkeys() {
   const detailedHotkey = 'CommandOrControl+Shift+D';
   const success2 = globalShortcut.register(detailedHotkey, handleDetailedAnalysis);
   
+  // 質問機能用ショートカット（透明オーバーレイウィンドウを表示）
+  const questionHotkey = 'CommandOrControl+Shift+Q';
+  const success3 = globalShortcut.register(questionHotkey, showQuestionOverlay);
+  
   // 結果のログ
-  if (success1 && success2) {
-    console.log(`✅ ホットキーを登録しました: ${captureHotkey}, ${detailedHotkey}`);
+  if (success1 && success2 && success3) {
+    console.log(`✅ ホットキーを登録しました: ${captureHotkey}, ${detailedHotkey}, ${questionHotkey}`);
   } else {
     console.error(`❌ ホットキーの登録に失敗しました`);
   }
@@ -280,7 +356,7 @@ async function handleScreenCapture() {
     }
 
     await speak(description, {
-      speed: 1.0,   // 読み上げ速度（0.5-2.0）
+      speed: 1.5,   // 読み上げ速度（0.5-2.0）
                     // 0.5 = 遅い、1.0 = 標準、1.5 = 速い、2.0 = 非常に速い
       volume: 1.0,  // 音量（0.0-1.0）
       language: 'ja-JP'  // 言語
@@ -405,6 +481,126 @@ async function handleDetailedAnalysis() {
     
   } catch (error) {
     console.error('❌ 詳細分析中にエラーが発生しました:', error);
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: `エラー: ${error.message}`
+      });
+    }
+  } finally {
+    isProcessing = false;
+  }
+}
+
+/**
+ * 質問分析処理
+ */
+async function handleQuestionAnalysis(questionText) {
+  if (!lastCapturedImageBase64) {
+    console.log('⚠️ 分析する画像がありません。まず画面をキャプチャしてください。');
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: '画像がありません。先に画面キャプチャを行ってください。'
+      });
+    }
+    return;
+  }
+  
+  if (isProcessing) {
+    console.log('⚠️ 既に処理中です');
+    return;
+  }
+  
+  if (!isPythonReady) {
+    console.log('⚠️ Pythonバックエンドが準備できていません');
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: 'Pythonバックエンドが起動していません'
+      });
+    }
+    return;
+  }
+  
+  if (!questionText || questionText.trim() === '') {
+    console.log('⚠️ 質問文が空です');
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'error',
+        message: '質問文を入力してください。'
+      });
+    }
+    return;
+  }
+  
+  isProcessing = true;
+  
+  try {
+    // 質問分析中
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'analyzing',
+        message: '質問を分析中...'
+      });
+    }
+    
+    // API送信（質問プロンプト）
+    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: lastCapturedImageBase64,
+        promptType: 'question',
+        question: questionText
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error);
+    }
+    
+    const description = data.result;
+    console.log('📝 質問への回答:', description);
+    
+    // 結果を表示
+    if (mainWindow) {
+      mainWindow.webContents.send('analysis-result', {
+        text: description,
+        timestamp: new Date().toISOString(),
+        model: data.model,
+        isQuestion: true,
+        question: questionText
+      });
+    }
+    
+    // 読み上げ中
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'speaking',
+        message: '回答を読み上げ中...'
+      });
+    }
+    
+    await speak(description, {
+      speed: 1.5,
+      volume: 1.0,
+      language: 'ja-JP'
+    });
+    
+    // 完了
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'idle',
+        message: '待機中'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ 質問分析中にエラーが発生しました:', error);
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -543,4 +739,32 @@ ipcMain.handle('get-available-models', async () => {
 ipcMain.handle('detailed-analysis', async () => {
   await handleDetailedAnalysis();
   return { success: true };
+});
+
+// 質問分析
+ipcMain.handle('question-analysis', async (event, questionText) => {
+  await handleQuestionAnalysis(questionText);
+  return { success: true };
+});
+
+// 質問モーダル表示チェック（画像があるかどうか）
+ipcMain.handle('can-show-question-modal', async () => {
+  return { canShow: !!lastCapturedImageBase64 };
+});
+
+// 透明オーバーレイウィンドウからの質問送信
+ipcMain.on('overlay-question-submit', async (event, questionText) => {
+  console.log('📝 オーバーレイから質問を受信:', questionText);
+  
+  // オーバーレイウィンドウを非表示
+  hideQuestionOverlay();
+  
+  // 質問処理を実行
+  await handleQuestionAnalysis(questionText);
+});
+
+// 透明オーバーレイウィンドウからのキャンセル
+ipcMain.on('overlay-question-cancel', () => {
+  console.log('❌ 質問がキャンセルされました');
+  hideQuestionOverlay();
 });

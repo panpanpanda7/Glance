@@ -9,10 +9,17 @@ const statusText = document.getElementById('status-text');
 const modelInfo = document.getElementById('model-info');
 const captureBtn = document.getElementById('capture-btn');
 const detailedBtn = document.getElementById('detailed-btn'); // 詳細分析ボタン
+const questionBtn = document.getElementById('question-btn'); // 質問ボタン
 const stopBtn = document.getElementById('stop-btn');
 const noResult = document.getElementById('no-result');
 const resultText = document.getElementById('result-text');
 const timestamp = document.getElementById('timestamp');
+
+// 質問モーダル関連の要素
+const questionModal = document.getElementById('question-modal');
+const questionInput = document.getElementById('question-input');
+const questionSubmit = document.getElementById('question-submit');
+const questionCancel = document.getElementById('question-cancel');
 
 // ステータス更新
 window.electronAPI.onStatusUpdate((data) => {
@@ -30,11 +37,15 @@ window.electronAPI.onStatusUpdate((data) => {
     captureBtn.style.opacity = '0.5';
     detailedBtn.disabled = true;
     detailedBtn.style.opacity = '0.5';
+    questionBtn.disabled = true;
+    questionBtn.style.opacity = '0.5';
   } else {
     captureBtn.disabled = false;
     captureBtn.style.opacity = '1';
     detailedBtn.disabled = false;
     detailedBtn.style.opacity = '1';
+    questionBtn.disabled = false;
+    questionBtn.style.opacity = '1';
   }
 });
 
@@ -55,6 +66,12 @@ window.electronAPI.onAnalysisResult((data) => {
     // 詳細分析結果かどうかを表示
     if (data.isDetailed) {
       modelText += ' [詳細モード]';
+    }
+    // 質問結果かどうかを表示
+    if (data.isQuestion) {
+      modelText += ' [質問モード]';
+      // 質問内容も表示
+      resultText.textContent = `Q: ${data.question}\n\nA: ${data.text}`;
     }
     resultText.textContent += modelText;
   }
@@ -79,6 +96,13 @@ window.electronAPI.onModelLoaded((data) => {
   if (data.backend) {
     modelInfo.textContent = `バックエンド: ${data.backend}`;
   }
+});
+
+// ショートカットキーからの質問ボタンクリックトリガー
+window.electronAPI.onTriggerQuestionButton(() => {
+  console.log('Question button triggered by shortcut key');
+  // 質問ボタンクリックと同じ処理を実行
+  questionBtn.click();
 });
 
 // キャプチャボタンのクリック
@@ -106,6 +130,25 @@ detailedBtn.addEventListener('click', async () => {
   }
 });
 
+// 質問ボタンのクリック
+questionBtn.addEventListener('click', async () => {
+  console.log('Question button clicked');
+  try {
+    // 画像が存在するかチェック
+    const result = await window.electronAPI.canShowQuestionModal();
+    if (!result.canShow) {
+      statusDot.className = 'status-dot error';
+      statusText.textContent = '画像がありません。先に画面キャプチャを行ってください。';
+      return;
+    }
+    
+    // モーダル表示
+    showQuestionModal();
+  } catch (error) {
+    console.error('Question error:', error);
+  }
+});
+
 // 停止ボタンのクリック
 stopBtn.addEventListener('click', async () => {
   console.log('Stop button clicked');
@@ -115,6 +158,64 @@ stopBtn.addEventListener('click', async () => {
     statusText.textContent = '待機中';
   } catch (error) {
     console.error('Stop error:', error);
+  }
+});
+
+// 質問モーダル表示
+function showQuestionModal() {
+  questionModal.style.display = 'block';
+  questionInput.value = '';
+  questionInput.focus();
+}
+
+// 質問モーダル非表示
+function hideQuestionModal() {
+  questionModal.style.display = 'none';
+  questionInput.value = '';
+}
+
+// 質問送信
+async function submitQuestion() {
+  const questionText = questionInput.value.trim();
+  
+  if (!questionText) {
+    alert('質問を入力してください。');
+    return;
+  }
+  
+  hideQuestionModal();
+  
+  try {
+    await window.electronAPI.questionAnalysis(questionText);
+  } catch (error) {
+    console.error('Question analysis error:', error);
+  }
+}
+
+// 質問モーダルのイベントリスナー
+questionSubmit.addEventListener('click', submitQuestion);
+
+questionCancel.addEventListener('click', hideQuestionModal);
+
+// モーダル外クリックで閉じる
+questionModal.addEventListener('click', (e) => {
+  if (e.target === questionModal) {
+    hideQuestionModal();
+  }
+});
+
+// ESCキーでモーダルを閉じる
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && questionModal.style.display === 'block') {
+    hideQuestionModal();
+  }
+});
+
+// Enterキーで質問送信
+questionInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    submitQuestion();
   }
 });
 

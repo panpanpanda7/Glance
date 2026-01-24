@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 詳細分析
   detailedAnalysis: () => ipcRenderer.invoke('detailed-analysis'),
   
+  // 質問分析
+  questionAnalysis: (questionText) => ipcRenderer.invoke('question-analysis', questionText),
+  
+  // 質問モーダル表示チェック
+  canShowQuestionModal: () => ipcRenderer.invoke('can-show-question-modal'),
+  
   // 読み上げ停止
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   
@@ -32,5 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   onModelLoaded: (callback) => {
     ipcRenderer.on('model-loaded', (event, data) => callback(data));
+  },
+  
+  onTriggerQuestionButton: (callback) => {
+    ipcRenderer.on('trigger-question-button', () => callback());
   }
 });
