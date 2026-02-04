@@ -1,11 +1,23 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-activeModel: internvl-4b
+activeModel: internvl-3_5-4b-gguf
 
 models:
+  # ===== GGUF量子化モデル（推奨）=====
+  internvl-3_5-4b-gguf:
+    name: InternVL 3.5 4B GGUF (Q4_K_M)
+    type: internvl_gguf
+    path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
+    mmproj_path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf
+    precision: high
+    estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+    ramRequired: 3GB (CPU)
+    speculativeDecoding: LlamaPromptLookupDecoding
+
+  # ===== Transformersモデル（旧）=====
   internvl-3_5_4b:
-    name: InternVL 3.5 4B
+    name: InternVL 3.5 4B (Transformers)
     type: internvl
     path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/InternVL3.5-4B
     precision: high
@@ -55,12 +67,10 @@ models:
 # プロンプト設定
 prompt:
   systemPrompt: |
-    あなたは視覚障害者のための画面読み上げアシスタントです。
-    画面に表示されている内容を、全体の情報がわかるように要約してください。
-    
-    曖昧な表現（「グラフがあります」など）は避け、具体的かつ詳細に説明してください。
-    その際、重要な情報を見逃さないように注意してください。
-    また、画像を精緻に確認し誤った情報は提供しないでください。
+    画面に表示されている内容を、全体的な情報がわかるように要約してください。
+    画面の内容を正確に把握し誤った情報を決して含まないでください。
+    図や表が表示されている場合はそこに記載されいるテキストを読み込み、適切に要約してください。
+    要約は100文字程度で簡潔に行ってください。
   
   detailedPrompt: |
     あなたは視覚障害者のための画面読み上げアシスタントです。

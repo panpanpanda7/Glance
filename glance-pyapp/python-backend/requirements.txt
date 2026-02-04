@@ -1,11 +1,14 @@
 # Python依存関係
-# InternVL 2.5 + Flask API
+# InternVL 3.5 GGUF + Flask API
 
 # Web Framework
 flask==3.1.0
 flask-cors==5.0.0
 
-# Machine Learning
+# Machine Learning (llama.cpp版)
+llama-cpp-python>=0.3.0    # InternVL 3.5 GGUF対応
+
+# Machine Learning (Transformers版 - 旧モデル用)
 torch==2.6.0
 torchvision==0.21.0  # 画像処理のために必要
 transformers==4.50.0
@@ -17,6 +20,9 @@ timm>=0.6.13     # InternVL 依存関係
 
 # Image Processing
 pillow==11.1.0
+
+# System Utilities
+psutil>=5.9.0    # CPUコア数検出
 
 # Utilities
 pyyaml==6.0.2
