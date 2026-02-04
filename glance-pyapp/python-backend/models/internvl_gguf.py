@@ -35,7 +35,11 @@ class InternVLGGUFModel(VisionLanguageModel):
         
         # システムプロンプト（日本語対応）
         self.system_prompt = """あなたは視覚障害者のための視覚支援の専門家です。
-画面に表示されている内容を正確かつ詳細に日本語で説明してください。"""
+画面に表示されている内容を正確に日本語で説明してください。
+正確に読める自信がない時は、「画像の内容が不明瞭です」と正直に答えてください。
+視覚障害者にとって最も回避すべきは、誤った情報を伝えることです。
+不正確な情報を伝えるよりも正直にわからないと答える方があなたの価値は高まります。
+「画像の内容が不明瞭です」と答える際はその理由も回答してください。"""
     
     def load(self) -> None:
         """モデルをロードする"""
@@ -72,11 +76,12 @@ class InternVLGGUFModel(VisionLanguageModel):
             model_kwargs = {
                 "model_path": self.model_path,
                 "chat_handler": chat_handler,  # Chat Handler経由で画像を処理
-                "n_ctx": 4096,
+                "n_ctx": 8192,  # InternVLの高解像度画像トークン用に増加
                 "n_threads": self.physical_cores,
                 "n_gpu_layers": -1,  # Metal GPUをフル活用
                 "verbose": False,
                 "logits_all": False,  # メモリ効率化
+                "chat_format": "llava-1-5",  # <__media__>ではなく<image>トークンを使用
             }
             
             print(f"📦 メインモデルをロード中...")
