@@ -35,9 +35,7 @@ class InternVLGGUFModel(VisionLanguageModel):
         
         # システムプロンプト（日本語対応）
         self.system_prompt = """あなたは視覚障害者のための視覚支援の専門家です。
-画面に表示されている内容を正確かつ詳細に日本語で説明してください。
-テキスト、ボタン、画像、グラフなど、すべての視覚要素を含めて説明してください。
-重要な情報を優先し、画面の構成も含めて説明してください。"""
+画面に表示されている内容を正確かつ詳細に日本語で説明してください。"""
     
     def load(self) -> None:
         """モデルをロードする"""
@@ -51,7 +49,7 @@ class InternVLGGUFModel(VisionLanguageModel):
         
         try:
             from llama_cpp import Llama
-            from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+            from llama_cpp.llama_chat_format import Llava15ChatHandler
             
             # メモリチェック
             available_memory = psutil.virtual_memory().available / (1024 ** 3)
@@ -64,23 +62,24 @@ class InternVLGGUFModel(VisionLanguageModel):
             if not self.mmproj_path or not os.path.exists(self.mmproj_path):
                 raise FileNotFoundError(f"ビジョンプロジェクタが見つかりません: {self.mmproj_path}")
             
-            # メインモデルのロード（新しい統合API - clip_model_pathを直接渡す）
-            # LlamaPromptLookupDecodingを使用（モデルベースの投機的デコーディングは廃止）
+            # Chat Handlerの作成（画像埋め込みパイプライン）
+            print(f"📦 Chat Handlerを初期化中...")
+            chat_handler = Llava15ChatHandler(clip_model_path=self.mmproj_path)
+            print(f"✅ Chat Handler初期化完了")
+            
+            # メインモデルのロード（Chat Handler経由で画像処理）
+            # 投機的デコーディングは無効化（logits_all=Falseとの互換性問題のため）
             model_kwargs = {
                 "model_path": self.model_path,
-                "clip_model_path": self.mmproj_path,  # 直接渡す方式（libmtmd対応）
+                "chat_handler": chat_handler,  # Chat Handler経由で画像を処理
                 "n_ctx": 4096,
                 "n_threads": self.physical_cores,
                 "n_gpu_layers": -1,  # Metal GPUをフル活用
                 "verbose": False,
-                "logits_all": False,  # メモリ効率化（Falseが正しい）
-                # LlamaPromptLookupDecoding: プロンプト内のパターンを使った軽量な投機的デコーディング
-                # CPU環境ではnum_pred_tokens=2が最も効率的
-                "draft_model": LlamaPromptLookupDecoding(num_pred_tokens=2),
+                "logits_all": False,  # メモリ効率化
             }
             
             print(f"📦 メインモデルをロード中...")
-            print(f"   🚀 投機的デコーディング: LlamaPromptLookupDecoding (num_pred_tokens=2)")
             self.llm = Llama(**model_kwargs)
             
             self.is_loaded = True
@@ -282,5 +281,5 @@ class InternVLGGUFModel(VisionLanguageModel):
             'mmproj_path': self.mmproj_path,
             'is_loaded': self.is_loaded,
             'physical_cores': self.physical_cores,
-            'speculative_decoding': 'LlamaPromptLookupDecoding'
+            'speculative_decoding': 'disabled'
         }
