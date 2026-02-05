@@ -26,8 +26,8 @@ CORS(app)  # Electronからのアクセスを許可
 # ==========================================
 # ダウンロードするモデルのURL (InternVL 3.5 4B GGUF Q4_K_Mの例)
 # ※必ず実際に使用するモデルの直リンク(Raw URL)を設定してください
-MODEL_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
-MMPROJ_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf"
+MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
+MMPROJ_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf"
 
 # グローバル変数
 current_model = None
