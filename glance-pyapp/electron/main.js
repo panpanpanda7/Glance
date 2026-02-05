@@ -26,25 +26,29 @@ async function startPythonBackend() {
   console.log('🐍 Python Backendを起動中...');
   
   const isDev = process.argv.includes('--dev');
-  let pythonPath, scriptPath;
+  let executablePath, args, cwd;
   
   if (isDev) {
     // 開発環境：venv内のPythonを使用
-    pythonPath = path.join(__dirname, '..', 'python-backend', 'venv', 'bin', 'python3');
-    scriptPath = path.join(__dirname, '..', 'python-backend', 'app.py');
+    executablePath = path.join(__dirname, '..', 'python-backend', 'venv', 'bin', 'python3');
+    const scriptPath = path.join(__dirname, '..', 'python-backend', 'app.py');
+    args = [scriptPath];
+    cwd = path.dirname(scriptPath);
   } else {
-    // 本番環境：パッケージ化されたPythonを使用
+    // 本番環境：PyInstallerでビルドされたEXEを使用
     const resourcesPath = process.resourcesPath;
-    pythonPath = path.join(resourcesPath, 'python-runtime', 'bin', 'python3');
-    scriptPath = path.join(resourcesPath, 'python-backend', 'app.py');
+    const backendDir = path.join(resourcesPath, 'glance-backend');
+    executablePath = path.join(backendDir, 'glance-backend.exe');
+    args = [];
+    cwd = backendDir;
   }
   
-  console.log(`   Python: ${pythonPath}`);
-  console.log(`   Script: ${scriptPath}`);
+  console.log(`   実行ファイル: ${executablePath}`);
+  console.log(`   作業ディレクトリ: ${cwd}`);
   
-  pythonProcess = spawn(pythonPath, [scriptPath], {
+  pythonProcess = spawn(executablePath, args, {
     stdio: 'inherit',
-    cwd: path.dirname(scriptPath)
+    cwd: cwd
   });
   
   pythonProcess.on('error', (err) => {
@@ -767,4 +771,14 @@ ipcMain.on('overlay-question-submit', async (event, questionText) => {
 ipcMain.on('overlay-question-cancel', () => {
   console.log('❌ 質問がキャンセルされました');
   hideQuestionOverlay();
+});
+
+// TTS読み上げ（renderer.jsから呼び出し可能に）
+ipcMain.handle('speak', async (event, text, options = {}) => {
+  await speak(text, {
+    speed: options.speed || 1.5,
+    volume: options.volume || 1.0,
+    language: options.language || 'ja-JP'
+  });
+  return { success: true };
 });

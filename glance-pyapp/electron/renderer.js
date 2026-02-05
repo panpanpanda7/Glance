@@ -25,6 +25,13 @@ const questionCancel = document.getElementById('question-cancel');
 window.electronAPI.onStatusUpdate((data) => {
   console.log('Status update:', data);
   
+  // ★IPCイベントを受信したらポーリングを停止
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval);
+    statusCheckInterval = null;
+    console.log('✅ ステータスポーリングを停止しました（IPCイベント受信）');
+  }
+  
   // ステータスドットのクラスを更新
   statusDot.className = `status-dot ${data.status}`;
   
@@ -225,8 +232,93 @@ function lastCaptureExist() {
   return resultText.style.display !== 'none';
 }
 
+// ==========================================
+// システム状態監視
+// ==========================================
+
+let lastStatus = "";
+let lastSpokenProgress = -1; // 前回読み上げた進捗
+let statusCheckInterval = null; // ポーリング用のインターバルID
+
+function checkSystemStatus() {
+  fetch('http://127.0.0.1:5001/status')
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'initializing') {
+        // 初期化中
+        if (statusText) statusText.textContent = data.message;
+        statusDot.className = 'status-dot connecting';
+        
+      } else if (data.status === 'downloading') {
+        // ダウンロード中
+        let displayText = `${data.message}`;
+        if (data.detail) {
+          displayText += ` ${data.detail}`;
+        }
+        if (statusText) statusText.textContent = displayText;
+        statusDot.className = 'status-dot connecting';
+        
+        // 音声読み上げ（10%刻みで通知）
+        if (data.progress % 10 === 0 && data.progress !== lastSpokenProgress && data.progress > 0) {
+          window.electronAPI.speak(`準備中、${data.progress}パーセント完了`);
+          lastSpokenProgress = data.progress;
+        }
+        
+      } else if (data.status === 'loading_model') {
+        // モデルロード中
+        if (statusText) statusText.textContent = data.message;
+        statusDot.className = 'status-dot connecting';
+        if (lastStatus !== 'loading_model') {
+          window.electronAPI.speak("ダウンロード完了。AIを起動しています。");
+        }
+        
+      } else if (data.status === 'ready') {
+        // 準備完了
+        if (statusText) statusText.textContent = "待機中";
+        statusDot.className = 'status-dot idle';
+        if (lastStatus !== 'ready') {
+          window.electronAPI.speak("準備が完了しました。Glanceを使用できます。");
+        }
+        
+        // ★準備完了したらポーリングを停止（main.jsのIPCステータスに任せる）
+        if (statusCheckInterval) {
+          clearInterval(statusCheckInterval);
+          statusCheckInterval = null;
+          console.log('✅ ステータスポーリングを停止しました（バックエンド準備完了）');
+        }
+        
+      } else if (data.status === 'error') {
+        // エラー
+        let errorText = data.message;
+        if (data.detail) {
+          errorText += `: ${data.detail}`;
+        }
+        if (statusText) statusText.textContent = errorText;
+        statusDot.className = 'status-dot error';
+        if (lastStatus !== 'error') {
+          window.electronAPI.speak("エラーが発生しました。詳細はステータス欄を確認してください。");
+        }
+      }
+      
+      lastStatus = data.status;
+    })
+    .catch(err => {
+      console.log("Waiting for backend...", err);
+      // バックエンドがまだ起動していない場合のみメッセージを表示
+      if (!lastStatus || lastStatus === '') {
+        if (statusText) statusText.textContent = 'Pythonバックエンド起動中...';
+        statusDot.className = 'status-dot connecting';
+      }
+    });
+}
+
 // ページロード時
 window.addEventListener('DOMContentLoaded', () => {
   console.log('Renderer loaded');
   statusText.textContent = 'Pythonバックエンド起動中...';
+  
+  // 2秒ごとにシステムステータスをチェック
+  statusCheckInterval = setInterval(checkSystemStatus, 2000);
+  // 即座に1回チェック
+  checkSystemStatus();
 });

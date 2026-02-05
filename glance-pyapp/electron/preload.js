@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 読み上げ停止
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   
+  // TTS読み上げ
+  speak: (text, options) => ipcRenderer.invoke('speak', text, options),
+  
   // イベントリスナー
   onStatusUpdate: (callback) => {
     ipcRenderer.on('status-update', (event, data) => callback(data));

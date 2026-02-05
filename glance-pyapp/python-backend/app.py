@@ -12,6 +12,8 @@ import io
 import os
 import sys
 import time
+import threading
+import requests
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
 
@@ -19,9 +21,137 @@ from models.internvl_gguf import InternVLGGUFModel
 app = Flask(__name__)
 CORS(app)  # Electronからのアクセスを許可
 
+# ==========================================
+# 定数・設定 (ユーザーに合わせて変更してください)
+# ==========================================
+# ダウンロードするモデルのURL (InternVL 3.5 4B GGUF Q4_K_Mの例)
+# ※必ず実際に使用するモデルの直リンク(Raw URL)を設定してください
+MODEL_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
+MMPROJ_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf"
+
 # グローバル変数
 current_model = None
 config = None
+
+# アプリの状態管理
+app_state = {
+    "status": "initializing",  # initializing, downloading, loading_model, ready, error
+    "progress": 0,             # ダウンロード進捗 (0-100)
+    "message": "起動準備中...",
+    "detail": ""
+}
+
+
+def get_writable_model_path():
+    """書き込み可能なモデル保存先パスを取得"""
+    if getattr(sys, 'frozen', False):
+        # EXE実行時はユーザーのAppDataフォルダを使用 (権限エラー回避)
+        if sys.platform == 'win32':
+            base_dir = os.path.join(os.environ.get('APPDATA', ''), 'Glance', 'models')
+        elif sys.platform == 'darwin':
+            base_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Glance', 'models')
+        else:
+            base_dir = os.path.join(os.path.expanduser('~'), '.local', 'share', 'Glance', 'models')
+    else:
+        # 開発時はローカルのmodelsフォルダ
+        base_dir = os.path.join(os.path.dirname(__file__), 'models', 'gguf')
+    
+    os.makedirs(base_dir, exist_ok=True)
+    return base_dir
+
+
+def download_file(url, dest_path, file_description="ファイル"):
+    """進捗状況を更新しながらファイルをダウンロード"""
+    try:
+        print(f"📥 {file_description}をダウンロード中: {url}")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded_size = 0
+        
+        with open(dest_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    if total_size > 0:
+                        progress = int((downloaded_size / total_size) * 100)
+                        # 進捗をグローバル変数に反映
+                        app_state["progress"] = progress
+                        app_state["detail"] = f"{progress}% ({downloaded_size // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)"
+                        
+                        # 10%刻みでログ出力
+                        if progress % 10 == 0 and progress != 0:
+                            print(f"   進捗: {progress}%")
+        
+        print(f"✅ {file_description}のダウンロード完了: {dest_path}")
+                        
+    except Exception as e:
+        print(f"❌ ダウンロードエラー: {e}")
+        raise e
+
+
+def initialize_system():
+    """バックグラウンド初期化処理"""
+    global current_model, config
+    
+    try:
+        # 1. 保存先パスの決定
+        model_dir = get_writable_model_path()
+        model_filename = "OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
+        mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf"
+        model_path = os.path.join(model_dir, model_filename)
+        mmproj_path = os.path.join(model_dir, mmproj_filename)
+        
+        # 2. モデルの存在確認とダウンロード
+        if not os.path.exists(model_path):
+            app_state["status"] = "downloading"
+            app_state["message"] = "AIモデルをダウンロードしています..."
+            app_state["progress"] = 0
+            download_file(MODEL_DOWNLOAD_URL, model_path, "AIモデル")
+            
+        if not os.path.exists(mmproj_path):
+            app_state["status"] = "downloading"
+            app_state["message"] = "画像処理エンジンをダウンロードしています..."
+            app_state["progress"] = 0
+            download_file(MMPROJ_DOWNLOAD_URL, mmproj_path, "画像処理エンジン")
+
+        # 3. モデルのロード
+        app_state["status"] = "loading_model"
+        app_state["message"] = "AIを起動しています..."
+        app_state["progress"] = 100
+        app_state["detail"] = ""
+        
+        print(f"\n{'='*60}")
+        print(f"📦 モデルをロード中: {model_path}")
+        print(f"{'='*60}\n")
+        
+        # configのパスを動的に書き換え
+        config['models']['internvl-3_5-4b-gguf']['path'] = model_path
+        config['models']['internvl-3_5-4b-gguf']['mmproj_path'] = mmproj_path
+        
+        # モデルをロード
+        current_model = InternVLGGUFModel(
+            model_path=model_path,
+            mmproj_path=mmproj_path,
+            draft_model_path=None
+        )
+        current_model.load()
+        
+        app_state["status"] = "ready"
+        app_state["message"] = "準備完了"
+        app_state["detail"] = ""
+        
+        print(f"\n✅ モデルロード完了")
+        print(f"{'='*60}\n")
+        
+    except Exception as e:
+        print(f"❌ 初期化エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        app_state["status"] = "error"
+        app_state["message"] = "起動エラーが発生しました"
+        app_state["detail"] = str(e)
 
 
 def load_config():
@@ -41,7 +171,11 @@ def load_model(model_name: str):
     print(f"{'='*60}\n")
     
     model_config = config['models'][model_name]
-    model_path = os.path.join(os.path.dirname(__file__), model_config['path'])
+    model_path = model_config['path']
+    
+    # 相対パスの場合は絶対パスに変換
+    if not os.path.isabs(model_path):
+        model_path = os.path.join(os.path.dirname(__file__), model_path)
     
     # 既存モデルをアンロード
     if current_model is not None:
@@ -55,6 +189,14 @@ def load_model(model_name: str):
         # GGUF量子化モデル
         mmproj_path = model_config.get('mmproj_path')
         draft_model_path = model_config.get('draft_model_path')
+        
+        # mmproj_pathも相対パスの場合は絶対パスに変換
+        if mmproj_path and not os.path.isabs(mmproj_path):
+            mmproj_path = os.path.join(os.path.dirname(__file__), mmproj_path)
+        
+        # draft_model_pathも相対パスの場合は絶対パスに変換
+        if draft_model_path and not os.path.isabs(draft_model_path):
+            draft_model_path = os.path.join(os.path.dirname(__file__), draft_model_path)
         
         # 投機的デコーディングが無効の場合はドラフトモデルパスをNoneに
         if not model_config.get('speculativeDecoding', False):
@@ -88,6 +230,12 @@ def health_check():
         'status': 'ok',
         'model_loaded': current_model is not None and current_model.is_loaded
     })
+
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    """現在のシステム状態を返す（Electronポーリング用）"""
+    return jsonify(app_state)
 
 
 @app.route('/analyze', methods=['POST'])
@@ -408,18 +556,14 @@ if __name__ == '__main__':
         print(f"❌ 設定ファイルの読み込みに失敗: {e}")
         sys.exit(1)
     
-    # アクティブモデルをロード
-    try:
-        active_model = config['activeModel']
-        load_model(active_model)
-    except Exception as e:
-        print(f"❌ モデルのロードに失敗: {e}")
-        print("⚠️  モデルなしでサーバーを起動します")
+    # ★バックグラウンドスレッドで初期化を開始
+    print("🔄 バックグラウンドで初期化処理を開始...")
+    threading.Thread(target=initialize_system, daemon=True).start()
     
     # Flaskサーバーを起動
     server_config = config.get('server', {})
     host = server_config.get('host', '127.0.0.1')
-    port = server_config.get('port', 5000)
+    port = server_config.get('port', 5001)
     debug = server_config.get('debug', False)
     
     print(f"\n{'='*60}")
