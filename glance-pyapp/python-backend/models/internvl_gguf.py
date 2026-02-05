@@ -34,12 +34,10 @@ class InternVLGGUFModel(VisionLanguageModel):
         print(f"🖥️  物理CPUコア数: {self.physical_cores}")
         
         # システムプロンプト（日本語対応）
-        self.system_prompt = """あなたは視覚障害者のための視覚支援の専門家です。
-画面に表示されている内容を正確に日本語で説明してください。
-正確に読める自信がない時は、「画像の内容が不明瞭です」と正直に答えてください。
-視覚障害者にとって最も回避すべきは、誤った情報を伝えることです。
-不正確な情報を伝えるよりも正直にわからないと答える方があなたの価値は高まります。
-「画像の内容が不明瞭です」と答える際はその理由も回答してください。"""
+        self.system_prompt = """あなたは視覚障害者を支援するAIアシスタントです。
+あなたの役割は、提供された画像を客観的に分析し、ユーザーに状況を伝えることです。
+推測や想像を含めず、画像から読み取れる「文字」「色」「形」「数値」などの視覚情報に基づいて説明してください。
+もし一部が読み取りにくい場合は、読み取れる部分のみを使って可能な範囲で説明してください。"""
     
     def load(self) -> None:
         """モデルをロードする"""
@@ -171,7 +169,7 @@ class InternVLGGUFModel(VisionLanguageModel):
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                stream=False
+                stream=False,stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:"]
             )
             
             result = response['choices'][0]['message']['content']
@@ -239,7 +237,7 @@ class InternVLGGUFModel(VisionLanguageModel):
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                stream=True
+                stream=True,stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:"]
             ):
                 if 'choices' in chunk and len(chunk['choices']) > 0:
                     delta = chunk['choices'][0].get('delta', {})
