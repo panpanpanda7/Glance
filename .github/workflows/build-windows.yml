@@ -1,0 +1,75 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*' # "v1.0.0" などのタグを打つと実行されます
+  workflow_dispatch: # 手動実行も可能に
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 1. Python環境のセットアップ
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install Python dependencies
+      working-directory: ./glance-pyapp/python-backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    # 2. Pythonバックエンドのビルド（モデルを含まないので高速）
+    - name: Build Python Backend
+      working-directory: ./glance-pyapp/python-backend
+      run: |
+        pyinstaller glance.spec
+
+    # 3. Node.js環境のセットアップ
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: './glance-pyapp/electron/package-lock.json'
+
+    - name: Install Electron dependencies
+      working-directory: ./glance-pyapp/electron
+      run: npm ci
+
+    # 4. ビルド済みPythonバックエンドをElectronのリソースにコピー
+    - name: Copy Python backend to Electron resources
+      run: |
+        New-Item -ItemType Directory -Force -Path ./glance-pyapp/electron/resources
+        Copy-Item -Recurse -Force ./glance-pyapp/python-backend/dist/glance-backend ./glance-pyapp/electron/resources/
+
+    # 5. アプリのビルドとパッケージング
+    - name: Build Electron App
+      working-directory: ./glance-pyapp/electron
+      run: npm run build
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # 6. 生成されたインストーラーをリリースにアップロード
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          glance-pyapp/electron/dist/*.exe
+          glance-pyapp/electron/dist/*.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: true
