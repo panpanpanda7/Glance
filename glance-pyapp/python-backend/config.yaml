@@ -1,11 +1,23 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-activeModel: internvl-4b
+activeModel: internvl-3_5-4b-gguf
 
 models:
+  # ===== GGUF量子化モデル（推奨）=====
+  internvl-3_5-4b-gguf:
+    name: InternVL 3.5 4B GGUF (Q4_K_M)
+    type: internvl_gguf
+    path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
+    mmproj_path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf
+    precision: high
+    estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+    ramRequired: 3GB (CPU)
+    speculativeDecoding: LlamaPromptLookupDecoding
+
+  # ===== Transformersモデル（旧）=====
   internvl-3_5_4b:
-    name: InternVL 3.5 4B
+    name: InternVL 3.5 4B (Transformers)
     type: internvl
     path: /Users/takeshi/Project/Glance/glance-pyapp/python-backend/models/InternVL3.5-4B
     precision: high
@@ -55,15 +67,12 @@ models:
 # プロンプト設定
 prompt:
   systemPrompt: |
-    あなたは視覚障害者のための画面読み上げアシスタントです。
-    画面に表示されている内容を、全体の情報がわかるように要約してください。
-    
-    曖昧な表現（「グラフがあります」など）は避け、具体的かつ詳細に説明してください。
-    その際、重要な情報を見逃さないように注意してください。
-    また、画像を精緻に確認し誤った情報は提供しないでください。
+    画面に表示されている内容を100文字程度で簡潔に要約してください。
+    図や表がある場合は、そのタイトルや数値、傾向を読み取って説明に含めてください。
+    全体が把握できない場合でも、認識できた要素（テキストやボタンなど）を列挙してください。
+    ここでは詳細を述べる必要はありません。詳細のフェーズは別にあるので、あくまで概要を把握できる簡素な説明を提供してください。
   
   detailedPrompt: |
-    あなたは視覚障害者のための画面読み上げアシスタントです。
     画面に表示されている内容を、以下の順序で詳細に日本語で説明してください：
     
     1. 全体の概要: 何のアプリケーション・画面か（例: Teams会議、Excel、Webブラウザ）
@@ -75,19 +84,17 @@ prompt:
   
   # 将来の拡張のために準備
   questionPrompt: |
-    あなたは視覚障害者のための画面読み上げアシスタントです。
     以下の質問に基づいて、画面に表示されている内容について詳細に回答してください：
-    
+    全体が把握できない場合でも、認識できた要素（テキストやボタンなど）を列挙してください。
+
     質問: {question}
-    
-    回答は具体的かつ正確にしてください。
-    質問に関連する画面の要素について詳しく説明し、数値やテキストは正確に伝えてください。
   
   temperature: 0.1
   maxTokens: 1000
   topP: 0.9
   repetition_penalty: 1.2  # 繰り返しにペナルティ（1.0-2.0、デフォルト1.0）
   no_repeat_ngram_size: 3  # 同じN-gramの繰り返しを防ぐ
+  max_token: 5000  # モデルの最大トークン数
 
 # サーバー設定
 server:
