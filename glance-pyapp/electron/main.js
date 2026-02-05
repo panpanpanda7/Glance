@@ -768,3 +768,13 @@ ipcMain.on('overlay-question-cancel', () => {
   console.log('❌ 質問がキャンセルされました');
   hideQuestionOverlay();
 });
+
+// TTS読み上げ（renderer.jsから呼び出し可能に）
+ipcMain.handle('speak', async (event, text, options = {}) => {
+  await speak(text, {
+    speed: options.speed || 1.5,
+    volume: options.volume || 1.0,
+    language: options.language || 'ja-JP'
+  });
+  return { success: true };
+});
