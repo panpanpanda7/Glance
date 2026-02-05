@@ -43,18 +43,8 @@
     ],
     "extraResources": [
       {
-        "from": "../python-backend",
-        "to": "python-backend",
-        "filter": ["**/*", "!venv/**", "!__pycache__/**"]
-      },
-      {
-        "from": "../python-runtime",
-        "to": "python-runtime",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "../models",
-        "to": "models",
+        "from": "resources/glance-backend",
+        "to": "glance-backend",
         "filter": ["**/*"]
       }
     ],
