@@ -65,8 +65,8 @@ Windows用インストーラーを自動生成：
 `app.py`の冒頭でダウンロードするモデルのURLを設定してください：
 
 ```python
-MODEL_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
-MMPROJ_DOWNLOAD_URL = "https://huggingface.co/OpenGVLab/InternVL3.5-4B-GGUF/resolve/main/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf"
+MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true"
+MMPROJ_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true"
 ```
 
 ⚠️ **注意**: 必ず`/resolve/main/`を含む直リンクを使用してください。

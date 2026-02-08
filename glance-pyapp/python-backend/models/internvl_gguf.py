@@ -75,11 +75,13 @@ class InternVLGGUFModel(VisionLanguageModel):
                 "model_path": self.model_path,
                 "chat_handler": chat_handler,  # Chat Handler経由で画像を処理
                 "n_ctx": 8192,  # InternVLの高解像度画像トークン用に増加
+                "n_batch": 2048,           # デフォルト512から2048へ拡大
                 "n_threads": self.physical_cores,
                 "n_gpu_layers": -1,  # Metal GPUをフル活用
                 "verbose": False,
                 "logits_all": False,  # メモリ効率化
                 "chat_format": "llava-1-5",  # <__media__>ではなく<image>トークンを使用
+                "flash_attn": True,        # Flash Attentionを有効化（対応ハードウェアの場合に高速化）
             }
             
             print(f"📦 メインモデルをロード中...")
@@ -100,7 +102,7 @@ class InternVLGGUFModel(VisionLanguageModel):
     def _encode_image_to_base64(self, image: Image.Image) -> str:
         """PIL画像をBase64にエンコード"""
         # 画像を最適サイズにリサイズ（1344px以下）
-        max_size = 1344
+        max_size = 448
         if max(image.size) > max_size:
             ratio = max_size / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
