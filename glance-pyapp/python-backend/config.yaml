@@ -9,60 +9,11 @@ models:
     name: InternVL 3.5 4B GGUF (Q4_K_M)
     type: internvl_gguf
     path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
-    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-bf16.gguf
+    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
     precision: high
     estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
     ramRequired: 3GB (CPU)
     speculativeDecoding: LlamaPromptLookupDecoding
-
-  # ===== Transformersモデル（旧）=====
-  internvl-3_5_4b:
-    name: InternVL 3.5 4B (Transformers)
-    type: internvl
-    path: models/InternVL3.5-4B
-    precision: high
-    estimatedInferenceTime: 15-30s (CPU), 3-8s (GPU)
-    ramRequired: 8GB (CPU), 4GB (GPU)
-
-  internvl-26b:
-    name: InternVL 2.5 26B
-    type: internvl
-    path: models/InternVL2.5-26B
-    precision: maximum
-    estimatedInferenceTime: 60-180s (CPU), 15-40s (GPU)
-    ramRequired: 32GB (CPU), 16GB (GPU)
-    
-  internvl-8b:
-    name: InternVL 2.5 8B
-    type: internvl
-    path: models/InternVL2.5-8B
-    precision: very_high
-    estimatedInferenceTime: 30-60s (CPU), 5-15s (GPU)
-    ramRequired: 16GB (CPU), 8GB (GPU)
-    
-  internvl-4b:
-    name: InternVL 2.5 4B
-    type: internvl
-    path: models/InternVL2.5-4B
-    precision: high
-    estimatedInferenceTime: 15-30s (CPU), 3-8s (GPU)
-    ramRequired: 8GB (CPU), 4GB (GPU)
-
-  internvl-1b:
-    name: InternVL 2.5 1B
-    type: internvl
-    path: models/InternVL2.5-1B
-    precision: high
-    estimatedInferenceTime: 15-30s (CPU), 3-8s (GPU)
-    ramRequired: 8GB (CPU), 4GB (GPU)
-    
-  qwen2-vl-7b:
-    name: Qwen2-VL 7B Instruct
-    type: qwen
-    path: ../models/Qwen2-VL-7B-Instruct
-    precision: very_high
-    estimatedInferenceTime: 30-60s (CPU), 5-15s (GPU)
-    ramRequired: 16GB (CPU), 8GB (GPU)
 
 # プロンプト設定
 prompt:

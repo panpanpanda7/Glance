@@ -102,7 +102,7 @@ class InternVLGGUFModel(VisionLanguageModel):
     def _encode_image_to_base64(self, image: Image.Image) -> str:
         """PIL画像をBase64にエンコード"""
         # 画像を最適サイズにリサイズ（1344px以下）
-        max_size = 896
+        max_size = 448
         if max(image.size) > max_size:
             ratio = max_size / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
