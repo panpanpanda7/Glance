@@ -4,6 +4,14 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { captureFullScreen } from './utils/screenshot.js';
 import { speak, stopSpeaking } from './utils/tts.js';
+import { 
+  playCaptureSound, 
+  playDetailedSound, 
+  playQuestionSound, 
+  startProgressSound, 
+  stopProgressSound, 
+  playErrorSound 
+} from './utils/sounds.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -262,15 +270,24 @@ function createTray() {
 function registerHotkeys() {
   // 最も使用頻度の高いキャプチャ用ショートカット
   const captureHotkey = 'CommandOrControl+Shift+G';
-  const success1 = globalShortcut.register(captureHotkey, handleScreenCapture);
+  const success1 = globalShortcut.register(captureHotkey, () => {
+    playCaptureSound(); // キャプチャ音を再生
+    handleScreenCapture();
+  });
   
   // 2番目に使用頻度の高い詳細分析用ショートカット
   const detailedHotkey = 'CommandOrControl+Shift+D';
-  const success2 = globalShortcut.register(detailedHotkey, handleDetailedAnalysis);
+  const success2 = globalShortcut.register(detailedHotkey, () => {
+    playDetailedSound(); // 詳細分析音を再生
+    handleDetailedAnalysis();
+  });
   
   // 質問機能用ショートカット（透明オーバーレイウィンドウを表示）
   const questionHotkey = 'CommandOrControl+Shift+Q';
-  const success3 = globalShortcut.register(questionHotkey, showQuestionOverlay);
+  const success3 = globalShortcut.register(questionHotkey, () => {
+    playQuestionSound(); // 質問音を再生
+    showQuestionOverlay();
+  });
   
   // 結果のログ
   if (success1 && success2 && success3) {
@@ -321,6 +338,9 @@ async function handleScreenCapture() {
         message: '画面を分析中...'
       });
     }
+    
+    // 推論継続音を開始
+    startProgressSound();
 
     // Python APIに送信（標準プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
@@ -340,6 +360,9 @@ async function handleScreenCapture() {
 
     const description = data.result;
     console.log('📝 生成された説明:', description);
+    
+    // 推論継続音を停止
+    stopProgressSound();
 
     // 結果を表示
     if (mainWindow) {
@@ -378,6 +401,12 @@ async function handleScreenCapture() {
     
   } catch (error) {
     console.error('❌ 処理中にエラーが発生しました:', error);
+    
+    // 推論継続音を停止
+    stopProgressSound();
+    
+    // エラー音を再生
+    playErrorSound();
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -432,6 +461,9 @@ async function handleDetailedAnalysis() {
       });
     }
     
+    // 推論継続音を開始
+    startProgressSound();
+    
     // API送信（詳細プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
@@ -450,6 +482,9 @@ async function handleDetailedAnalysis() {
     
     const description = data.result;
     console.log('📝 詳細分析の結果:', description);
+    
+    // 推論継続音を停止
+    stopProgressSound();
     
     // 結果を表示
     if (mainWindow) {
@@ -485,6 +520,12 @@ async function handleDetailedAnalysis() {
     
   } catch (error) {
     console.error('❌ 詳細分析中にエラーが発生しました:', error);
+    
+    // 推論継続音を停止
+    stopProgressSound();
+    
+    // エラー音を再生
+    playErrorSound();
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -550,6 +591,9 @@ async function handleQuestionAnalysis(questionText) {
       });
     }
     
+    // 推論継続音を開始
+    startProgressSound();
+    
     // API送信（質問プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
@@ -569,6 +613,9 @@ async function handleQuestionAnalysis(questionText) {
     
     const description = data.result;
     console.log('📝 質問への回答:', description);
+    
+    // 推論継続音を停止
+    stopProgressSound();
     
     // 結果を表示
     if (mainWindow) {
@@ -605,6 +652,12 @@ async function handleQuestionAnalysis(questionText) {
     
   } catch (error) {
     console.error('❌ 質問分析中にエラーが発生しました:', error);
+    
+    // 推論継続音を停止
+    stopProgressSound();
+    
+    // エラー音を再生
+    playErrorSound();
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
