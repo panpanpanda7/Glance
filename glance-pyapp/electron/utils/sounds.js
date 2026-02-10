@@ -1,5 +1,12 @@
 import { exec } from 'child_process';
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import yaml from 'js-yaml';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * 音声フィードバックユーティリティ
@@ -7,6 +14,39 @@ import os from 'os';
  */
 
 let progressSoundInterval = null;
+let soundConfig = null;
+
+/**
+ * 設定ファイルを読み込む
+ */
+function loadConfig() {
+  if (soundConfig) return soundConfig;
+  
+  try {
+    const configPath = path.join(__dirname, '..', 'config.yaml');
+    const fileContents = fs.readFileSync(configPath, 'utf8');
+    const config = yaml.load(fileContents);
+    soundConfig = config.sounds;
+    console.log('✅ 音声設定を読み込みました:', configPath);
+    return soundConfig;
+  } catch (error) {
+    console.error('⚠️ 音声設定の読み込みに失敗しました。デフォルト設定を使用します:', error);
+    // デフォルト設定
+    soundConfig = {
+      enabled: true,
+      progressInterval: 2000,
+      actions: {
+        capture: { frequency: 1000, duration: 100 },
+        detailed: { frequency: 800, duration: 80 },
+        question: { frequency: 600, duration: 100 },
+        progress: { frequency: 700, duration: 50 },
+        error: { sequences: [{ frequency: 800, duration: 100 }, { delay: 50 }, { frequency: 400, duration: 150 }] },
+        success: { sequences: [{ frequency: 600, duration: 80 }, { delay: 50 }, { frequency: 900, duration: 100 }] }
+      }
+    };
+    return soundConfig;
+  }
+}
 
 /**
  * ビープ音を鳴らす（クロスプラットフォーム対応）
@@ -109,42 +149,58 @@ function playBeepLinux(frequency, duration) {
  * 画面キャプチャ音（高いピッ）
  */
 export async function playCaptureSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.capture;
   console.log('🔊 キャプチャ音を再生');
-  await playBeep(1000, 100);
+  await playBeep(settings.frequency, settings.duration);
 }
 
 /**
- * 詳細分析音（中音のダブルピッ）
+ * 詳細分析音（中音）
  */
 export async function playDetailedSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.detailed;
   console.log('🔊 詳細分析音を再生');
-  await playBeep(800, 80);
-  await new Promise(resolve => setTimeout(resolve, 100));
-  await playBeep(800, 80);
+  await playBeep(settings.frequency, settings.duration);
 }
 
 /**
  * 質問音（低めの単音）
  */
 export async function playQuestionSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.question;
   console.log('🔊 質問音を再生');
-  await playBeep(600, 100);
+  await playBeep(settings.frequency, settings.duration);
 }
 
 /**
  * 推論継続中の音（控えめなティック音）
- * 2秒ごとに繰り返し再生
+ * 設定された間隔ごとに繰り返し再生
  */
 export function startProgressSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
   // 既に再生中の場合は停止
   stopProgressSound();
   
-  console.log('🔊 推論継続音を開始');
+  const settings = config.actions.progress;
+  const interval = config.progressInterval;
   
-  // 2秒ごとに繰り返し
+  console.log(`🔊 推論継続音を開始（${interval}ms間隔）`);
+  
+  // 設定された間隔ごとに繰り返し
   progressSoundInterval = setInterval(() => {
-    playBeep(700, 50);
-  }, 2000);
+    playBeep(settings.frequency, settings.duration);
+  }, interval);
 }
 
 /**
@@ -159,21 +215,51 @@ export function stopProgressSound() {
 }
 
 /**
- * エラー音（下降音）
+ * エラー音（設定されたシーケンス）
  */
 export async function playErrorSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.error;
   console.log('🔊 エラー音を再生');
-  await playBeep(800, 100);
-  await new Promise(resolve => setTimeout(resolve, 50));
-  await playBeep(400, 150);
+  
+  // シーケンスがある場合はそれを使用
+  if (settings.sequences) {
+    for (const item of settings.sequences) {
+      if (item.delay) {
+        await new Promise(resolve => setTimeout(resolve, item.delay));
+      } else if (item.frequency) {
+        await playBeep(item.frequency, item.duration);
+      }
+    }
+  } else {
+    // フォールバック（旧形式）
+    await playBeep(settings.frequency || 800, settings.duration || 100);
+  }
 }
 
 /**
- * 成功音（上昇音）
+ * 成功音（設定されたシーケンス）
  */
 export async function playSuccessSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.success;
   console.log('🔊 成功音を再生');
-  await playBeep(600, 80);
-  await new Promise(resolve => setTimeout(resolve, 50));
-  await playBeep(900, 100);
+  
+  // シーケンスがある場合はそれを使用
+  if (settings.sequences) {
+    for (const item of settings.sequences) {
+      if (item.delay) {
+        await new Promise(resolve => setTimeout(resolve, item.delay));
+      } else if (item.frequency) {
+        await playBeep(item.frequency, item.duration);
+      }
+    }
+  } else {
+    // フォールバック（旧形式）
+    await playBeep(settings.frequency || 600, settings.duration || 80);
+  }
 }

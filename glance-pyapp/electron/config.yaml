@@ -1,0 +1,71 @@
+# Glance Electron Frontend Configuration
+# 音声フィードバック設定
+
+sounds:
+  # 音声フィードバックの有効/無効
+  enabled: true
+  
+  # 推論継続音の間隔（ミリ秒）
+  progressInterval: 2000
+  
+  # 各アクションの音声設定
+  actions:
+    # 画面キャプチャ音（Cmd+Shift+G）
+    capture:
+      frequency: 1000  # 周波数（Hz）- Windows/Linux用
+      duration: 100    # 持続時間（ミリ秒）
+      macSound: /System/Library/Sounds/Tink.aiff  # macOS用サウンドファイル
+    
+    # 詳細分析音（Cmd+Shift+D）
+    detailed:
+      frequency: 800
+      duration: 80
+      macSound: /System/Library/Sounds/Pop.aiff
+    
+    # 質問音（Cmd+Shift+Q）
+    question:
+      frequency: 600
+      duration: 100
+      macSound: /System/Library/Sounds/Morse.aiff
+    
+    # 推論継続中の音（2秒ごとのティック音）
+    progress:
+      frequency: 700
+      duration: 50
+      macSound: /System/Library/Sounds/Tink.aiff
+    
+    # エラー音（下降音）
+    error:
+      sequences:
+        - frequency: 800
+          duration: 100
+        - delay: 50  # 次の音までの待機時間
+        - frequency: 400
+          duration: 150
+      macSound: /System/Library/Sounds/Basso.aiff
+    
+    # 成功音（上昇音）
+    success:
+      sequences:
+        - frequency: 600
+          duration: 80
+        - delay: 50
+        - frequency: 900
+          duration: 100
+      macSound: /System/Library/Sounds/Glass.aiff  # macOS用サウンドファイル
+
+# 利用可能なmacOSシステムサウンド（参考）
+# - Basso.aiff: 低い警告音
+# - Blow.aiff: 風の音
+# - Bottle.aiff: ボトル音
+# - Frog.aiff: カエル音
+# - Funk.aiff: ファンク音
+# - Glass.aiff: ガラス音（軽快）
+# - Hero.aiff: ヒーロー音
+# - Morse.aiff: モールス音（低め）
+# - Ping.aiff: ピン音
+# - Pop.aiff: ポップ音（中音）
+# - Purr.aiff: 振動音
+# - Sosumi.aiff: 軽快な音
+# - Submarine.aiff: 潜水艦音
+# - Tink.aiff: 軽い金属音（高め）
