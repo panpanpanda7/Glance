@@ -24,6 +24,7 @@ let pythonProcess = null;
 let isProcessing = false;
 let isPythonReady = false;
 let lastCapturedImageBase64 = null; // 直前の画像（Base64エンコード済み）
+let abortController = null; // 推論中断用のAbortController
 
 const PYTHON_API_URL = 'http://127.0.0.1:5001';
 
@@ -342,6 +343,9 @@ async function handleScreenCapture() {
     // 推論継続音を開始
     startProgressSound();
 
+    // AbortControllerを作成（推論中断用）
+    abortController = new AbortController();
+
     // Python APIに送信（標準プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
@@ -349,7 +353,8 @@ async function handleScreenCapture() {
       body: JSON.stringify({
         image: lastCapturedImageBase64,
         promptType: 'standard'
-      })
+      }),
+      signal: abortController.signal
     });
 
     const data = await response.json();
@@ -464,6 +469,9 @@ async function handleDetailedAnalysis() {
     // 推論継続音を開始
     startProgressSound();
     
+    // AbortControllerを作成（推論中断用）
+    abortController = new AbortController();
+    
     // API送信（詳細プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
@@ -471,7 +479,8 @@ async function handleDetailedAnalysis() {
       body: JSON.stringify({
         image: lastCapturedImageBase64,
         promptType: 'detailed'
-      })
+      }),
+      signal: abortController.signal
     });
     
     const data = await response.json();
@@ -594,6 +603,9 @@ async function handleQuestionAnalysis(questionText) {
     // 推論継続音を開始
     startProgressSound();
     
+    // AbortControllerを作成（推論中断用）
+    abortController = new AbortController();
+    
     // API送信（質問プロンプト）
     const response = await fetch(`${PYTHON_API_URL}/analyze`, {
       method: 'POST',
@@ -602,7 +614,8 @@ async function handleQuestionAnalysis(questionText) {
         image: lastCapturedImageBase64,
         promptType: 'question',
         question: questionText
-      })
+      }),
+      signal: abortController.signal
     });
     
     const data = await response.json();
@@ -759,9 +772,34 @@ ipcMain.handle('capture-screen', async () => {
   return { success: true };
 });
 
-// 読み上げ停止
+// 読み上げ停止（推論も中断）
 ipcMain.handle('stop-speaking', async () => {
+  console.log('🛑 停止ボタンが押されました');
+  
+  // 推論を中断
+  if (abortController) {
+    console.log('🛑 推論を中断します');
+    abortController.abort();
+    abortController = null;
+  }
+  
+  // TTS停止
   stopSpeaking();
+  
+  // 推論継続音を停止
+  stopProgressSound();
+  
+  // 処理中フラグをリセット
+  isProcessing = false;
+  
+  // ステータスを待機中に
+  if (mainWindow) {
+    mainWindow.webContents.send('status-update', {
+      status: 'idle',
+      message: '待機中'
+    });
+  }
+  
   return { success: true };
 });
 

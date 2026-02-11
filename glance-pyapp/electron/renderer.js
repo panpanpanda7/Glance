@@ -258,8 +258,8 @@ function checkSystemStatus() {
         if (statusText) statusText.textContent = displayText;
         statusDot.className = 'status-dot connecting';
         
-        // 音声読み上げ（10%刻みで通知）
-        if (data.progress % 10 === 0 && data.progress !== lastSpokenProgress && data.progress > 0) {
+        // 音声読み上げ（10%刻みで通知）- ポーリング有効時のみ
+        if (data.progress % 10 === 0 && data.progress !== lastSpokenProgress && data.progress > 0 && statusCheckInterval) {
           window.electronAPI.speak(`準備中、${data.progress}パーセント完了`);
           lastSpokenProgress = data.progress;
         }
@@ -268,7 +268,8 @@ function checkSystemStatus() {
         // モデルロード中
         if (statusText) statusText.textContent = data.message;
         statusDot.className = 'status-dot connecting';
-        if (lastStatus !== 'loading_model') {
+        // ポーリング有効時のみTTS読み上げ
+        if (lastStatus !== 'loading_model' && statusCheckInterval) {
           window.electronAPI.speak("ダウンロード完了。AIを起動しています。");
         }
         
@@ -276,7 +277,8 @@ function checkSystemStatus() {
         // 準備完了
         if (statusText) statusText.textContent = "待機中";
         statusDot.className = 'status-dot idle';
-        if (lastStatus !== 'ready') {
+        // ポーリングが有効な場合のみTTS読み上げ（エラー後の遅延読み上げを防止）
+        if (lastStatus !== 'ready' && statusCheckInterval) {
           window.electronAPI.speak("準備が完了しました。Glanceを使用できます。");
         }
         
@@ -295,9 +297,10 @@ function checkSystemStatus() {
         }
         if (statusText) statusText.textContent = errorText;
         statusDot.className = 'status-dot error';
-        if (lastStatus !== 'error') {
-          window.electronAPI.speak("エラーが発生しました。詳細はステータス欄を確認してください。");
-        }
+        // エラー時のTTS読み上げ（コメントアウト - エラー音で代替）
+        // if (lastStatus !== 'error') {
+        //   window.electronAPI.speak("エラーが発生しました。詳細はステータス欄を確認してください。");
+        // }
       }
       
       lastStatus = data.status;

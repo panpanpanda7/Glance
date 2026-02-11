@@ -14,13 +14,13 @@ sounds:
     capture:
       frequency: 1000  # 周波数（Hz）- Windows/Linux用
       duration: 100    # 持続時間（ミリ秒）
-      macSound: /System/Library/Sounds/Tink.aiff  # macOS用サウンドファイル
+      macSound: /System/Library/Sounds/Hero.aiff  # macOS用サウンドファイル
     
     # 詳細分析音（Cmd+Shift+D）
     detailed:
       frequency: 800
       duration: 80
-      macSound: /System/Library/Sounds/Pop.aiff
+      macSound: /System/Library/Sounds/Glass.aiff
     
     # 質問音（Cmd+Shift+Q）
     question:
@@ -42,7 +42,7 @@ sounds:
         - delay: 50  # 次の音までの待機時間
         - frequency: 400
           duration: 150
-      macSound: /System/Library/Sounds/Basso.aiff
+      macSound: /System/Library/Sounds/Sosumi.aiff
     
     # 成功音（上昇音）
     success:

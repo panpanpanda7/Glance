@@ -52,14 +52,15 @@ function loadConfig() {
  * ビープ音を鳴らす（クロスプラットフォーム対応）
  * @param {number} frequency - 周波数（Hz）
  * @param {number} duration - 持続時間（ミリ秒）
+ * @param {string} macSound - macOS用のサウンドファイルパス（オプション）
  */
-async function playBeep(frequency, duration) {
+async function playBeep(frequency, duration, macSound = null) {
   const platform = os.platform();
 
   try {
     if (platform === 'darwin') {
       // macOS: osascriptを使用してビープ音を生成
-      await playBeepMacOS(frequency, duration);
+      await playBeepMacOS(frequency, duration, macSound);
     } else if (platform === 'win32') {
       // Windows: PowerShellの[console]::Beep()を使用
       await playBeepWindows(frequency, duration);
@@ -75,30 +76,32 @@ async function playBeep(frequency, duration) {
 
 /**
  * macOS用のビープ音
- * @param {number} frequency - 周波数（Hz）- システムサウンドファイル選択に使用
+ * @param {number} frequency - 周波数（Hz）- フォールバック用
  * @param {number} duration - 持続時間（ミリ秒）- 未使用（システムサウンドの長さに依存）
+ * @param {string} macSound - macOS用のサウンドファイルパス（オプション）
  */
-function playBeepMacOS(frequency, duration) {
+function playBeepMacOS(frequency, duration, macSound = null) {
   return new Promise((resolve) => {
-    // macOSでは周波数を直接制御できないため、
-    // 周波数の値に応じて異なるシステムサウンドを使用
+    // config.yamlでmacSoundが指定されている場合はそれを使用
     let soundFile;
     
-    if (frequency >= 950) {
-      // 高音（1000Hz付近）→ Tink（軽い金属音）
-      soundFile = '/System/Library/Sounds/Tink.aiff';
-    } else if (frequency >= 750) {
-      // 中音（800Hz付近）→ Pop（ポップ音）
-      soundFile = '/System/Library/Sounds/Pop.aiff';
-    } else if (frequency >= 650) {
-      // 推論継続音（700Hz付近）→ Tink（控えめ）
-      soundFile = '/System/Library/Sounds/Tink.aiff';
-    } else if (frequency >= 550) {
-      // 低音（600Hz付近）→ Morse（モールス音）
-      soundFile = '/System/Library/Sounds/Morse.aiff';
+    if (macSound) {
+      soundFile = macSound;
+      console.log(`🔊 macOS: 設定されたサウンドを使用: ${soundFile}`);
     } else {
-      // エラー音など（400Hz以下）→ Basso（低い警告音）
-      soundFile = '/System/Library/Sounds/Basso.aiff';
+      // macSoundが指定されていない場合は周波数ベースでフォールバック
+      if (frequency >= 950) {
+        soundFile = '/System/Library/Sounds/Tink.aiff';
+      } else if (frequency >= 750) {
+        soundFile = '/System/Library/Sounds/Pop.aiff';
+      } else if (frequency >= 650) {
+        soundFile = '/System/Library/Sounds/Tink.aiff';
+      } else if (frequency >= 550) {
+        soundFile = '/System/Library/Sounds/Morse.aiff';
+      } else {
+        soundFile = '/System/Library/Sounds/Basso.aiff';
+      }
+      console.log(`🔊 macOS: 周波数ベースでサウンドを選択 (${frequency}Hz): ${soundFile}`);
     }
     
     exec(`afplay "${soundFile}"`, (error) => {
@@ -154,7 +157,7 @@ export async function playCaptureSound() {
   
   const settings = config.actions.capture;
   console.log('🔊 キャプチャ音を再生');
-  await playBeep(settings.frequency, settings.duration);
+  await playBeep(settings.frequency, settings.duration, settings.macSound);
 }
 
 /**
@@ -166,7 +169,7 @@ export async function playDetailedSound() {
   
   const settings = config.actions.detailed;
   console.log('🔊 詳細分析音を再生');
-  await playBeep(settings.frequency, settings.duration);
+  await playBeep(settings.frequency, settings.duration, settings.macSound);
 }
 
 /**
@@ -178,7 +181,7 @@ export async function playQuestionSound() {
   
   const settings = config.actions.question;
   console.log('🔊 質問音を再生');
-  await playBeep(settings.frequency, settings.duration);
+  await playBeep(settings.frequency, settings.duration, settings.macSound);
 }
 
 /**
@@ -199,7 +202,7 @@ export function startProgressSound() {
   
   // 設定された間隔ごとに繰り返し
   progressSoundInterval = setInterval(() => {
-    playBeep(settings.frequency, settings.duration);
+    playBeep(settings.frequency, settings.duration, settings.macSound);
   }, interval);
 }
 
@@ -224,8 +227,11 @@ export async function playErrorSound() {
   const settings = config.actions.error;
   console.log('🔊 エラー音を再生');
   
-  // シーケンスがある場合はそれを使用
-  if (settings.sequences) {
+  // macOSでmacSoundが設定されている場合は、シーケンスではなくそれを使用
+  if (settings.macSound && os.platform() === 'darwin') {
+    await playBeep(settings.frequency || 800, settings.duration || 100, settings.macSound);
+  } else if (settings.sequences) {
+    // シーケンスがある場合はそれを使用
     for (const item of settings.sequences) {
       if (item.delay) {
         await new Promise(resolve => setTimeout(resolve, item.delay));
@@ -235,7 +241,7 @@ export async function playErrorSound() {
     }
   } else {
     // フォールバック（旧形式）
-    await playBeep(settings.frequency || 800, settings.duration || 100);
+    await playBeep(settings.frequency || 800, settings.duration || 100, settings.macSound);
   }
 }
 
@@ -249,8 +255,11 @@ export async function playSuccessSound() {
   const settings = config.actions.success;
   console.log('🔊 成功音を再生');
   
-  // シーケンスがある場合はそれを使用
-  if (settings.sequences) {
+  // macOSでmacSoundが設定されている場合は、シーケンスではなくそれを使用
+  if (settings.macSound && os.platform() === 'darwin') {
+    await playBeep(settings.frequency || 600, settings.duration || 80, settings.macSound);
+  } else if (settings.sequences) {
+    // シーケンスがある場合はそれを使用
     for (const item of settings.sequences) {
       if (item.delay) {
         await new Promise(resolve => setTimeout(resolve, item.delay));
@@ -260,6 +269,6 @@ export async function playSuccessSound() {
     }
   } else {
     // フォールバック（旧形式）
-    await playBeep(settings.frequency || 600, settings.duration || 80);
+    await playBeep(settings.frequency || 600, settings.duration || 80, settings.macSound);
   }
 }
