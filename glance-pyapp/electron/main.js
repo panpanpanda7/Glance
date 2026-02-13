@@ -55,14 +55,40 @@ async function startPythonBackend() {
   console.log(`   実行ファイル: ${executablePath}`);
   console.log(`   作業ディレクトリ: ${cwd}`);
   
+  // レンダラーにパス情報を送信
+  if (mainWindow) {
+    mainWindow.webContents.send('log-message', `[INFO] 実行ファイルパス: ${executablePath}`);
+    mainWindow.webContents.send('log-message', `[INFO] 作業ディレクトリ: ${cwd}`);
+    mainWindow.webContents.send('log-message', `[INFO] 開発モード: ${isDev ? '有効' : '無効'}`);
+  }
+  
   pythonProcess = spawn(executablePath, args, {
-    stdio: 'inherit',
+    stdio: 'pipe', // 'inherit'から'pipe'に変更して出力をキャプチャ
     cwd: cwd
+  });
+  
+  // 標準出力をキャプチャしてレンダラーに送信
+  pythonProcess.stdout.on('data', (data) => {
+    const output = data.toString();
+    console.log('[Python STDOUT]', output);
+    if (mainWindow) {
+      mainWindow.webContents.send('log-message', `[STDOUT] ${output.trim()}`);
+    }
+  });
+  
+  // 標準エラー出力をキャプチャしてレンダラーに送信
+  pythonProcess.stderr.on('data', (data) => {
+    const output = data.toString();
+    console.error('[Python STDERR]', output);
+    if (mainWindow) {
+      mainWindow.webContents.send('log-message', `[STDERR] ${output.trim()}`);
+    }
   });
   
   pythonProcess.on('error', (err) => {
     console.error('❌ Python起動エラー:', err);
     if (mainWindow) {
+      mainWindow.webContents.send('log-message', `[ERROR] Python起動エラー: ${err.message}`);
       mainWindow.webContents.send('status-update', {
         status: 'error',
         message: `Pythonバックエンドの起動に失敗: ${err.message}`
@@ -72,8 +98,15 @@ async function startPythonBackend() {
   
   pythonProcess.on('exit', (code) => {
     console.log(`⚠️  Pythonプロセスが終了しました (code: ${code})`);
+    if (mainWindow) {
+      mainWindow.webContents.send('log-message', `[INFO] Pythonプロセスが終了しました (終了コード: ${code})`);
+    }
     isPythonReady = false;
   });
+  
+  if (mainWindow) {
+    mainWindow.webContents.send('log-message', '[INFO] Python起動コマンドを実行しました');
+  }
   
   // Pythonバックエンドの起動を待つ
   await waitForPythonBackend();
@@ -85,6 +118,10 @@ async function startPythonBackend() {
 async function waitForPythonBackend() {
   console.log('⏳ Pythonバックエンドの起動を待機中...');
   
+  if (mainWindow) {
+    mainWindow.webContents.send('log-message', '[INFO] バックエンドのヘルスチェックを開始します');
+  }
+  
   const maxRetries = 300; // 300秒待つ
   
   for (let i = 0; i < maxRetries; i++) {
@@ -94,20 +131,33 @@ async function waitForPythonBackend() {
         const data = await response.json();
         if (data.model_loaded) {
           console.log('✅ Pythonバックエンドが起動しました（モデルロード済み）');
+          if (mainWindow) {
+            mainWindow.webContents.send('log-message', '[SUCCESS] バックエンド起動完了（モデルロード済み）');
+          }
           isPythonReady = true;
           return;
         } else {
           console.log('⏳ モデルロード中...');
+          if (mainWindow && i % 5 === 0) { // 5秒ごとに通知
+            mainWindow.webContents.send('log-message', `[INFO] モデルロード中... (試行 ${i + 1}/${maxRetries})`);
+          }
         }
       }
     } catch (e) {
       // まだ起動していない
+      if (mainWindow && i % 10 === 0) { // 10秒ごとにログ出力
+        const errorMsg = e.code ? `${e.code}` : e.message || '接続エラー';
+        mainWindow.webContents.send('log-message', `[WAIT] ヘルスチェック失敗: ${errorMsg} (試行 ${i + 1}/${maxRetries})`);
+      }
     }
     
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
-  throw new Error('Pythonバックエンドの起動タイムアウト（60秒）');
+  if (mainWindow) {
+    mainWindow.webContents.send('log-message', `[ERROR] バックエンド起動タイムアウト（${maxRetries}秒経過）`);
+  }
+  throw new Error('Pythonバックエンドの起動タイムアウト（300秒）');
 }
 
 /**

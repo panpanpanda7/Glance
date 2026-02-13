@@ -45,5 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   onTriggerQuestionButton: (callback) => {
     ipcRenderer.on('trigger-question-button', () => callback());
+  },
+  
+  // ログメッセージを受信
+  onLogMessage: (callback) => {
+    ipcRenderer.on('log-message', (_event, text) => callback(text));
   }
 });

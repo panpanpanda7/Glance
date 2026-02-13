@@ -315,10 +315,38 @@ function checkSystemStatus() {
     });
 }
 
+// ログメッセージの受信と表示
+const startupLogs = document.getElementById('startup-logs');
+let logLines = [];
+
+window.electronAPI.onLogMessage((text) => {
+  console.log('Log message:', text);
+  
+  // ログを配列に追加
+  logLines.push(text);
+  
+  // 最大500行に制限（メモリ節約）
+  if (logLines.length > 500) {
+    logLines.shift();
+  }
+  
+  // ログエリアを更新
+  if (startupLogs) {
+    startupLogs.textContent = logLines.join('\n');
+    // 自動スクロール（最新のログが見えるように）
+    startupLogs.scrollTop = startupLogs.scrollHeight;
+  }
+});
+
 // ページロード時
 window.addEventListener('DOMContentLoaded', () => {
   console.log('Renderer loaded');
   statusText.textContent = 'Pythonバックエンド起動中...';
+  
+  // ログエリアを初期化
+  if (startupLogs) {
+    startupLogs.textContent = 'ログ待機中...';
+  }
   
   // 2秒ごとにシステムステータスをチェック
   statusCheckInterval = setInterval(checkSystemStatus, 2000);
