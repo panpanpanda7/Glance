@@ -26,8 +26,12 @@ CORS(app)  # Electronからのアクセスを許可
 # ==========================================
 # ダウンロードするモデルのURL (InternVL 3.5 4B GGUF Q4_K_Mの例)
 # ※必ず実際に使用するモデルの直リンク(Raw URL)を設定してください
-MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true"
-MMPROJ_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true"
+#1B
+MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-1B-GGUF/resolve/main/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf?download=true"
+MMPROJ_DOWNLOAD_URL = "https://huggingface.co/QuantStack/InternVL3_5-1B-Instruct-gguf/resolve/main/mmproj-InternVL3_5-1B-Instruct-f16.gguf?download=true"
+#4B
+# MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true"
+# MMPROJ_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true"
 
 # グローバル変数
 current_model = None
@@ -98,8 +102,12 @@ def initialize_system():
     try:
         # 1. 保存先パスの決定
         model_dir = get_writable_model_path()
-        model_filename = "OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
-        mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf"
+        #1B
+        model_filename = "OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf"
+        mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf"
+        #4B
+        # model_filename = "OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
+        # mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf"
         model_path = os.path.join(model_dir, model_filename)
         mmproj_path = os.path.join(model_dir, mmproj_filename)
         
@@ -127,8 +135,12 @@ def initialize_system():
         print(f"{'='*60}\n")
         
         # configのパスを動的に書き換え
-        config['models']['internvl-3_5-4b-gguf']['path'] = model_path
-        config['models']['internvl-3_5-4b-gguf']['mmproj_path'] = mmproj_path
+        #1B
+        config['models']['internvl-3_5-1b-gguf']['path'] = model_path
+        config['models']['internvl-3_5-1b-gguf']['mmproj_path'] = mmproj_path
+        #4B
+        # config['models']['internvl-3_5-4b-gguf']['path'] = model_path
+        # config['models']['internvl-3_5-4b-gguf']['mmproj_path'] = mmproj_path
         
         # モデルをロード
         current_model = InternVLGGUFModel(

@@ -1,19 +1,31 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-activeModel: internvl-3_5-4b-gguf
+activeModel: internvl-3_5-1b-gguf
+# activeModel: internvl-3_5-4b-gguf
 
 models:
   # ===== GGUF量子化モデル（推奨）=====
-  internvl-3_5-4b-gguf:
-    name: InternVL 3.5 4B GGUF (Q4_K_M)
+  internvl-3_5-1b-gguf:
+    name: InternVL 3.5 1B GGUF (Q4_K_M)
     type: internvl_gguf
-    path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
-    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
+    path: models/gguf/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf
     precision: high
     estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
-    ramRequired: 3GB (CPU)
+    ramRequired: 2GB (CPU)
     speculativeDecoding: LlamaPromptLookupDecoding
+
+  # # ===== GGUF量子化モデル（推奨）=====
+  # internvl-3_5-4b-gguf:
+  #   name: InternVL 3.5 4B GGUF (Q4_K_M)
+  #   type: internvl_gguf
+  #   path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
+  #   mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
+  #   precision: high
+  #   estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+  #   ramRequired: 3GB (CPU)
+  #   speculativeDecoding: LlamaPromptLookupDecoding
 
 # プロンプト設定
 prompt:
