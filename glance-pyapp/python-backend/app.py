@@ -80,6 +80,7 @@ def download_file(url, dest_path, file_description="ファイル"):
         response.raise_for_status()
         total_size = int(response.headers.get('content-length', 0))
         downloaded_size = 0
+        last_reported_progress = -1  # 最後に表示した進捗を記録
         
         with open(dest_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -92,9 +93,10 @@ def download_file(url, dest_path, file_description="ファイル"):
                         app_state["progress"] = progress
                         app_state["detail"] = f"{progress}% ({downloaded_size // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)"
                         
-                        # 10%刻みでログ出力
-                        if progress % 10 == 0 and progress != 0:
+                        # 10%刻みでログ出力（前回と異なる場合のみ）
+                        if progress % 10 == 0 and progress != 0 and progress != last_reported_progress:
                             print(f"   進捗: {progress}%")
+                            last_reported_progress = progress  # 更新
         
         print(f"✅ {file_description}のダウンロード完了: {dest_path}")
                         

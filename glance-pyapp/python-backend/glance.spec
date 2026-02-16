@@ -5,12 +5,17 @@ PyInstaller spec file for Glance Python Backend
 """
 
 import sys
+import os
 from pathlib import Path
+import llama_cpp
 
 block_cipher = None
 
 # プロジェクトのベースディレクトリ
 base_dir = Path('.').absolute()
+
+# llama_cppのパスを取得
+llama_cpp_path = os.path.dirname(llama_cpp.__file__)
 
 a = Analysis(
     ['app.py'],
@@ -22,6 +27,8 @@ a = Analysis(
         ('models/model_interface.py', 'models'),
         ('models/internvl.py', 'models'),
         ('models/internvl_gguf.py', 'models'),
+        # llama_cppのlibフォルダを含める（DLL読み込みエラー対策）
+        (os.path.join(llama_cpp_path, 'lib'), 'llama_cpp/lib'),
         # 注意: modelsフォルダ内の実際のモデルファイル(.gguf)は含めません
         # これらは初回起動時にダウンロードされます
     ],
