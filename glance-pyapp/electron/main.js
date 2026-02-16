@@ -62,9 +62,13 @@ async function startPythonBackend() {
     mainWindow.webContents.send('log-message', `[INFO] 開発モード: ${isDev ? '有効' : '無効'}`);
   }
   
+  // 環境変数を設定（既存の環境変数を継承しつつ、PYTHONIOENCODINGを追加）
+  const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+  
   pythonProcess = spawn(executablePath, args, {
     stdio: 'pipe', // 'inherit'から'pipe'に変更して出力をキャプチャ
-    cwd: cwd
+    cwd: cwd,
+    env: env // 環境変数を指定
   });
   
   // 標準出力をキャプチャしてレンダラーに送信

@@ -17,6 +17,14 @@ import requests
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
 
+# ==========================================
+# WindowsでのUnicode出力エラー対策
+# ==========================================
+# 標準出力と標準エラー出力をUTF-8に強制する
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 # Flask アプリケーション初期化
 app = Flask(__name__)
 CORS(app)  # Electronからのアクセスを許可
