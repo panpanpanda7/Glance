@@ -171,7 +171,12 @@ class InternVLGGUFModel(VisionLanguageModel):
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                stream=False,stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:"]
+                top_p=kwargs.get('top_p', 0.9),
+                repeat_penalty=kwargs.get('repetition_penalty', 1.2),
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                stream=False,
+                stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:", "\nUser"]
             )
             
             result = response['choices'][0]['message']['content']
@@ -239,7 +244,12 @@ class InternVLGGUFModel(VisionLanguageModel):
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                stream=True,stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:"]
+                top_p=kwargs.get('top_p', 0.9),
+                repeat_penalty=kwargs.get('repetition_penalty', 1.2),
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                stream=True,
+                stop=["USER:", "ASSISTANT:", "<|im_end|>", "<|endoftext|>", "User:", "Assistant:", "\nUser"]
             ):
                 if 'choices' in chunk and len(chunk['choices']) > 0:
                     delta = chunk['choices'][0].get('delta', {})
