@@ -30,6 +30,22 @@ echo 📥 依存関係をインストール中...
 echo ⚠️  PyTorchのダウンロードには時間がかかります（数分〜10分）
 pip install -r requirements.txt
 
+REM llama-cpp-pythonをCPU互換性のために再ビルド
+echo.
+echo ============================================================
+echo 🔧 llama-cpp-pythonをCPU互換性のために再ビルド中...
+echo    (Illegal Instruction エラーを修正するため、ローカルでコンパイルします)
+echo ============================================================
+pip uninstall -y llama-cpp-python
+pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
+
+if %errorlevel% neq 0 (
+    echo.
+    echo ⚠️  [WARNING] ソースビルドに失敗しました。デフォルトのバイナリにフォールバック中...
+    echo    ビルドに失敗した場合、"Visual Studio Build Tools" (C++ Desktop Development) が必要な場合があります。
+    pip install llama-cpp-python
+)
+
 echo.
 echo ============================================================
 echo ✅ セットアップ完了！
