@@ -301,22 +301,32 @@ def analyze():
         # プロンプトタイプを取得（デフォルトは 'standard'）
         prompt_type = data.get('promptType', 'standard')
         
-        # プロンプトタイプに応じてプロンプトを選択（使用頻度順）
+        # プロンプトタイプに応じてプロンプトとmaxTokensを選択（使用頻度順）
+        max_tokens_map = {
+            'standard': config['prompt']['maxTokens']['summary'],    # 200
+            'detailed': config['prompt']['maxTokens']['detailed'],   # 500
+            'question': config['prompt']['maxTokens']['question']    # 200
+        }
+        
         if prompt_type == 'standard':  # 最も頻度が高い
             prompt = data.get('prompt', config['prompt']['systemPrompt'])
+            default_max_tokens = max_tokens_map['standard']
         elif prompt_type == 'detailed':
             prompt = data.get('prompt', config['prompt']['detailedPrompt'])
+            default_max_tokens = max_tokens_map['detailed']
         elif prompt_type == 'question':  # 将来の機能
             question_text = data.get('question', '')
             prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            default_max_tokens = max_tokens_map['question']
         else:
             # 未知のプロンプトタイプの場合はデフォルト
             prompt = data.get('prompt', config['prompt']['systemPrompt'])
+            default_max_tokens = max_tokens_map['standard']
             
         # パラメータ
         options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
-            'max_tokens': data.get('max_tokens', config['prompt']['maxTokens']),
+            'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
             'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.0)),
             'no_repeat_ngram_size': data.get('no_repeat_ngram_size', config['prompt'].get('no_repeat_ngram_size', 0))
@@ -465,21 +475,31 @@ def analyze_stream():
         # プロンプトタイプを取得
         prompt_type = data.get('promptType', 'standard')
         
-        # プロンプトタイプに応じてプロンプトを選択
+        # プロンプトタイプに応じてプロンプトとmaxTokensを選択
+        max_tokens_map = {
+            'standard': config['prompt']['maxTokens']['summary'],    # 200
+            'detailed': config['prompt']['maxTokens']['detailed'],   # 500
+            'question': config['prompt']['maxTokens']['question']    # 200
+        }
+        
         if prompt_type == 'standard':
             prompt = config['prompt']['systemPrompt']
+            default_max_tokens = max_tokens_map['standard']
         elif prompt_type == 'detailed':
             prompt = config['prompt']['detailedPrompt']
+            default_max_tokens = max_tokens_map['detailed']
         elif prompt_type == 'question':
             question_text = data.get('question', '')
             prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            default_max_tokens = max_tokens_map['question']
         else:
             prompt = config['prompt']['systemPrompt']
+            default_max_tokens = max_tokens_map['standard']
         
         # パラメータ
         options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
-            'max_tokens': data.get('max_tokens', config['prompt']['maxTokens']),
+            'max_tokens': data.get('max_tokens', default_max_tokens),
         }
         
         print(f"\n📸 ストリーミング分析リクエスト受信")

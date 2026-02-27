@@ -52,12 +52,17 @@ prompt:
 
     質問: {question}
   
-  temperature: 0.1
-  maxTokens: 1000
+  temperature: 0.2
   topP: 0.9
-  repetition_penalty: 1.2  # 繰り返しにペナルティ（1.0-2.0、デフォルト1.0）
+  repetition_penalty: 1.15  # 繰り返しにペナルティ（1.0-2.0、デフォルト1.0）
   no_repeat_ngram_size: 3  # 同じN-gramの繰り返しを防ぐ
   max_token: 5000  # モデルの最大トークン数
+  
+  # 機能別のmaxTokens設定
+  maxTokens:
+    summary: 200      # 概要説明
+    detailed: 500     # 詳細説明
+    question: 200     # 質問回答
 
 # サーバー設定
 server:
