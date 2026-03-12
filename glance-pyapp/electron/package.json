@@ -1,6 +1,6 @@
 {
   "name": "glance-pyapp",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Glance - 視覚障害者向けPC画面読み上げアプリ（Python API版）",
   "repository": {
     "type": "git",
@@ -55,6 +55,18 @@
     "win": {
       "target": ["nsis"],
       "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": true,
+      "installerSidebar": null,
+      "uninstallDisplayName": "Glance",
+      "allowElevation": true,
+      "perMachine": false,
+      "differentialPackage": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": ["dmg", "zip"],

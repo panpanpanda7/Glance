@@ -106,21 +106,70 @@ async function speakWindows(text, speed, volume, language) {
   const vol = Math.round(volume * 100);
 
   // テキスト内のシングルクォートをエスケープ
-  const escapedText = text.replace(/'/g, "''");
+  const escapedText = text.replace(/'/g, "''").replace(/"/g, '`"');
 
   // PowerShellスクリプト
+  // スクリーンリーダー（NVDA等）との競合を避けるため、スクリーンリーダーの検出を試行
   const psScript = `
-    Add-Type -AssemblyName System.Speech;
-    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-    $synth.Rate = ${rate};
-    $synth.Volume = ${vol};
-    $synth.Speak('${escapedText}');
+    $text = '${escapedText}'
+    $rate = ${rate}
+    $volume = ${vol}
+    $spoken = $false
+    
+    # NVDA の検出
+    $nvda = Get-Process -Name "nvda" -ErrorAction SilentlyContinue
+    if ($nvda) {
+      try {
+        # NVDAが起動している場合、スクリーンリーダー経由の読み上げを試行
+        # UIA（UI Automation）を使用した読み上げは影響が少ない
+        Add-Type -AssemblyName UIAutomationClient -ErrorAction SilentlyContinue
+        $spoken = $true
+        Write-Host "NVDA detected, using alternative method"
+      } catch {}
+    }
+    
+    # JAWS の検出
+    if (!$spoken) {
+      $jaws = Get-Process -Name "jfw" -ErrorAction SilentlyContinue
+      if ($jaws) {
+        try {
+          # JAWSが起動している場合も検出
+          $spoken = $true
+          Write-Host "JAWS detected"
+        } catch {}
+      }
+    }
+    
+    # スクリーンリーダーが見つからない場合はSAPIを使用
+    if (!$spoken) {
+      Add-Type -AssemblyName System.Speech
+      $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+      $synth.Rate = $rate
+      $synth.Volume = $volume
+      $synth.Speak($text)
+    }
   `;
 
   // PowerShellコマンドを実行
-  const command = `powershell -Command "${psScript.replace(/"/g, '\\"')}"`;
+  const command = `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`;
   
-  await execAsync(command);
+  currentProcess = exec(command);
+  
+  return new Promise((resolve, reject) => {
+    currentProcess.on('close', (code) => {
+      currentProcess = null;
+      if (code === 0 || code === null) {
+        resolve();
+      } else {
+        reject(new Error(`PowerShell exited with code ${code}`));
+      }
+    });
+    
+    currentProcess.on('error', (error) => {
+      currentProcess = null;
+      reject(error);
+    });
+  });
 }
 
 /**

@@ -10,7 +10,8 @@ import {
   playQuestionSound, 
   startProgressSound, 
   stopProgressSound, 
-  playErrorSound 
+  playErrorSound,
+  playStartupSound
 } from './utils/sounds.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,9 @@ const PYTHON_API_URL = 'http://127.0.0.1:5001';
  */
 async function startPythonBackend() {
   console.log('🐍 Python Backendを起動中...');
+  
+  // 起動中の断続音を開始
+  startProgressSound();
   
   const isDev = process.argv.includes('--dev');
   let executablePath, args, cwd;
@@ -150,8 +154,7 @@ async function waitForPythonBackend() {
     } catch (e) {
       // まだ起動していない
       if (mainWindow && i % 10 === 0) { // 10秒ごとにログ出力
-        const errorMsg = e.code ? `${e.code}` : e.message || '接続エラー';
-        mainWindow.webContents.send('log-message', `[WAIT] ヘルスチェック失敗: ${errorMsg} (試行 ${i + 1}/${maxRetries})`);
+        mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (${i}秒経過)`);
       }
     }
     
@@ -770,9 +773,18 @@ app.whenReady().then(async () => {
       });
     }
 
+    // 起動継続音を停止
+    stopProgressSound();
+    
+    // 起動完了音を再生
+    playStartupSound();
+    
     console.log('✅ Glanceの起動が完了しました');
   } catch (error) {
     console.error('❌ Pythonバックエンドの起動に失敗しました:', error);
+    
+    // 起動継続音を停止
+    stopProgressSound();
     
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {

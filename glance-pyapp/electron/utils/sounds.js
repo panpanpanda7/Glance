@@ -272,3 +272,31 @@ export async function playSuccessSound() {
     await playBeep(settings.frequency || 600, settings.duration || 80, settings.macSound);
   }
 }
+
+/**
+ * 起動完了音（設定されたシーケンス）
+ */
+export async function playStartupSound() {
+  const config = loadConfig();
+  if (!config.enabled) return;
+  
+  const settings = config.actions.startup;
+  console.log('🔊 起動完了音を再生');
+  
+  // macOSでmacSoundが設定されている場合は、シーケンスではなくそれを使用
+  if (settings.macSound && os.platform() === 'darwin') {
+    await playBeep(settings.frequency || 500, settings.duration || 100, settings.macSound);
+  } else if (settings.sequences) {
+    // シーケンスがある場合はそれを使用
+    for (const item of settings.sequences) {
+      if (item.delay) {
+        await new Promise(resolve => setTimeout(resolve, item.delay));
+      } else if (item.frequency) {
+        await playBeep(item.frequency, item.duration);
+      }
+    }
+  } else {
+    // フォールバック（旧形式）
+    await playBeep(settings.frequency || 500, settings.duration || 100, settings.macSound);
+  }
+}

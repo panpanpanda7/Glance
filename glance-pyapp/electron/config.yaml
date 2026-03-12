@@ -53,6 +53,19 @@ sounds:
         - frequency: 900
           duration: 100
       macSound: /System/Library/Sounds/Glass.aiff  # macOS用サウンドファイル
+    
+    # 起動完了音（上昇音 - 成功音より高め）
+    startup:
+      sequences:
+        - frequency: 500
+          duration: 100
+        - delay: 100
+        - frequency: 700
+          duration: 100
+        - delay: 100
+        - frequency: 900
+          duration: 150
+      macSound: /System/Library/Sounds/Hero.aiff
 
 # 利用可能なmacOSシステムサウンド（参考）
 # - Basso.aiff: 低い警告音
