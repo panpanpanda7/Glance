@@ -67,7 +67,13 @@ async function speakMacOS(text, speed, volume, language) {
   }
 
   // テキストをエスケープ
-  const escapedText = text.replace(/"/g, '\\"');
+  const escapedText = text
+  .replace(/\\/g, '\\\\')     // バックスラッシュをエスケープ
+  .replace(/"/g, '\\"')       // ダブルクォートをエスケープ
+  .replace(/`/g, "'")         // バッククォートをシングルクォートに
+  .replace(/\$/g, '\\$')      // $をエスケープ
+  .replace(/\n/g, ' ')        // 改行をスペースに
+  .replace(/\r/g, '');        // CRを削除
 
   const command = `say -v "${voice}" -r ${rate} "${escapedText}"`;
   
