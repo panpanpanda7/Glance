@@ -41,7 +41,8 @@ Thumbs.db
 
 # ビルド成果物
 electron/dist/
-build/
+build/*
+!build/installer.nsh
 packaging/dist/
 
 # テスト
