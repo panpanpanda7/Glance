@@ -40,6 +40,19 @@
       margin-bottom: 10px;
     }
 
+    h2 {
+      font-size: 14px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 500;
+      opacity: 0.7;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .subtitle {
       text-align: center;
       font-size: 12px;
@@ -281,46 +294,44 @@
 </head>
 <body>
   <div class="container">
-    <h1>👁️ Glance</h1>
-    <div class="subtitle">Powered by InternVL 3.5 & Python API</div>
+    <section>
+      <h2 class="section-label">アプリ名</h2>
+      <h1>Glance</h1>
+    </section>
     
-    <div class="status-card">
-      <div class="status-indicator">
-        <div class="status-dot loading" id="status-dot"></div>
-        <span id="status-text">起動中...</span>
+    <section>
+      <h2 class="section-label">ステータス</h2>
+      <div class="status-card">
+        <div class="status-indicator">
+          <div class="status-dot loading" id="status-dot"></div>
+          <span id="status-text">起動中...</span>
+        </div>
       </div>
-      <div class="model-info" id="model-info">Pythonバックエンド起動中...</div>
-    </div>
+    </section>
 
     <!-- 起動ログ表示エリア -->
-    <div id="startup-logs">ログ待機中...</div>
+    <section>
+      <h2 class="section-label">ログ情報</h2>
+      <div id="startup-logs">ログ待機中...</div>
+    </section>
 
-    <div class="controls">
-      <button class="btn-primary" id="capture-btn">
-        📸 画面を読み上げ
-      </button>
-      <button class="btn-primary" id="detailed-btn">
-        🔍 詳細分析
-      </button>
-      <button class="btn-primary" id="question-btn">
-        💬 質問
-      </button>
-      <button class="btn-secondary" id="stop-btn">
-        ⏹️ 停止
-      </button>
-    </div>
-
-    <div class="hotkey-hint">
-      ⌨️ ホットキー: <strong>Cmd+Shift+G</strong> (読み上げ) / <strong>D</strong> (詳細) / <strong>Q</strong> (質問)
-    </div>
-
-    <div class="result-card">
-      <div class="no-result" id="no-result">
-        画面をキャプチャすると、ここに詳細な説明が表示されます
+    <section>
+      <h2 class="section-label">操作説明</h2>
+      <div class="hotkey-hint">
+        ⌨️ ホットキー: Cmd+Shift+G (読み上げ) / Cmd+Shift+D (詳細) / Cmd+Shift+Q (質問)
       </div>
-      <div class="result-text" id="result-text" style="display: none;"></div>
-      <div class="timestamp" id="timestamp" style="display: none;"></div>
-    </div>
+    </section>
+
+    <section>
+      <h2 class="section-label">認識結果</h2>
+      <div class="result-card">
+        <div class="no-result" id="no-result">
+          画面をキャプチャすると、ここに詳細な説明が表示されます
+        </div>
+        <div class="result-text" id="result-text" style="display: none;"></div>
+        <div class="timestamp" id="timestamp" style="display: none;"></div>
+      </div>
+    </section>
   </div>
 
   <!-- 質問モーダル -->
