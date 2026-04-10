@@ -1,0 +1,31 @@
+# .gitattributes - ファイル属性設定
+
+# macOS拡張属性を無視するための設定
+# これにより、com.apple.provenanceなどの属性による誤差分を防ぎます
+* diff=binary -delta
+
+# テキストファイルの指定
+*.py diff=python text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# バイナリファイル
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pyc binary
+
+# macOS用
+.DS_Store export-ignore
+*.swp export-ignore
+*.swo export-ignore
+*~.nib export-ignore
