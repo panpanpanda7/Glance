@@ -33,12 +33,9 @@ class InternVLGGUFModel(VisionLanguageModel):
         self.physical_cores = psutil.cpu_count(logical=False) or 4
         print(f"🖥️  物理CPUコア数: {self.physical_cores}")
         
-        # システムプロンプト（日本語対応）
-        self.system_prompt = """あなたは視覚障害者を支援するAIアシスタントです。
-あなたの役割は、提供された画像を客観的に分析し、ユーザーに状況を伝えることです。
-推測や想像を含めず、画像から読み取れる視覚情報に基づいて説明してください。
-もし一部が読み取りにくい場合は、読み取れる部分のみを使って可能な範囲で説明してください。
-説明は ** 必ず日本語で行ってください **"""
+        # システムプロンプト（簡潔化、詳細はconfig.yamlで管理）
+        # config側のプロンプトと重複しないよう、基本的な役割設定のみに留める
+        self.system_prompt = """あなたは視覚障害者向けの画面説明アシスタントです。見えている内容のみを、日本語で説明してください。"""
     
     def load(self) -> None:
         """モデルをロードする"""
@@ -118,6 +115,55 @@ class InternVLGGUFModel(VisionLanguageModel):
         image.save(buffer, format='PNG')
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
     
+    def _clean_output(self, text: str) -> str:
+        """
+        生成結果の後処理
+        - 連続する同一文や同一行の重複を除去
+        - 前後の空白や不自然な改行を整理
+        """
+        # ステップ1: 前後の空白と不自然な改行を整理
+        text = text.strip()
+        # 3連続以上の改行を2連続に（段落分けは保持）
+        while '\n\n\n' in text:
+            text = text.replace('\n\n\n', '\n\n')
+        
+        # ステップ2: 連続する重複文を除去
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # 空行は保持
+            if not line.strip():
+                cleaned_lines.append(line)
+                continue
+            
+            # 前の行と同じかほぼ同じかチェック
+            # （完全一致、または97%以上の類似度）
+            if cleaned_lines and cleaned_lines[-1].strip():
+                prev_line = cleaned_lines[-1].strip()
+                curr_line = line.strip()
+                
+                # 完全一致チェック
+                if prev_line == curr_line:
+                    # 重複なので、この行は追加しない
+                    continue
+                
+                # 部分的な重複チェック（長さが似ている場合）
+                # 例: 同じ内容が少し改変されて繰り返された場合
+                if len(prev_line) > 10 and len(curr_line) > 10:
+                    # 最初の20文字が同じ場合は重複の可能性
+                    if prev_line[:20] == curr_line[:20]:
+                        continue
+            
+            cleaned_lines.append(line)
+        
+        result = '\n'.join(cleaned_lines)
+        
+        # ステップ3: 最後の空行を除去
+        result = result.rstrip()
+        
+        return result
+    
     def inference(self, image: Image.Image, prompt: str, **kwargs) -> str:
         """
         画像から説明文を生成する
@@ -184,6 +230,10 @@ class InternVLGGUFModel(VisionLanguageModel):
             )
             
             result = response['choices'][0]['message']['content']
+            
+            # 後処理：重複除去と空白整理
+            result = self._clean_output(result)
+            
             print(f"✅ 画像分析完了（{len(result)}文字）")
             
             return result
@@ -279,6 +329,9 @@ class InternVLGGUFModel(VisionLanguageModel):
             # 残りのバッファを出力
             if unicode_buffer:
                 yield unicode_buffer
+            
+            # ストリーミング側は即座に返すため、後処理は行わない
+            # （クライアント側で必要に応じて整理可能）
             
             print("✅ ストリーミング分析完了")
             

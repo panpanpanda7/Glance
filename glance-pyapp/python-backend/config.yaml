@@ -1,71 +1,86 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-activeModel: internvl-3_5-1b-gguf
-# activeModel: internvl-3_5-4b-gguf
+# activeModel: internvl-3_5-1b-gguf
+activeModel: internvl-3_5-4b-gguf
 
 models:
-  # ===== GGUF量子化モデル（推奨）=====
-  internvl-3_5-1b-gguf:
-    name: InternVL 3.5 1B GGUF (Q4_K_M)
-    type: internvl_gguf
-    path: models/gguf/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf
-    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf
-    precision: high
-    estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
-    ramRequired: 2GB (CPU)
-    speculativeDecoding: LlamaPromptLookupDecoding
-
   # # ===== GGUF量子化モデル（推奨）=====
-  # internvl-3_5-4b-gguf:
-  #   name: InternVL 3.5 4B GGUF (Q4_K_M)
+  # internvl-3_5-1b-gguf:
+  #   name: InternVL 3.5 1B GGUF (Q4_K_M)
   #   type: internvl_gguf
-  #   path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
-  #   mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
+  #   path: models/gguf/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf
+  #   mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf
+  #   download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-1B-GGUF/resolve/main/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf?download=true
+  #   mmproj_download_url: https://huggingface.co/QuantStack/InternVL3_5-1B-Instruct-gguf/resolve/main/mmproj-InternVL3_5-1B-Instruct-f16.gguf?download=true
   #   precision: high
   #   estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
-  #   ramRequired: 3GB (CPU)
+  #   ramRequired: 2GB (CPU)
   #   speculativeDecoding: LlamaPromptLookupDecoding
+
+  # ===== GGUF量子化モデル（推奨）=====
+  internvl-3_5-4b-gguf:
+  #   name: InternVL 3.5 4B GGUF (Q4_K_M)
+    type: internvl_gguf
+    path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
+    download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true
+    mmproj_download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true
+    precision: high
+    estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+    ramRequired: 3GB (CPU)
+    speculativeDecoding: LlamaPromptLookupDecoding
 
 # プロンプト設定
 prompt:
   systemPrompt: |
-    请务必使用**日语**输出。除日语以外的其他语言输出将不被接受。
-    画面に表示されている内容を100文字程度で簡潔に要約してください。
-    図や表がある場合は、その概要を説明に含めてください。
-    ここでは詳細を述べる必要はありません。詳細のフェーズは別にあるので、あくまで概要を把握できる簡素な説明を提供してください。
-    出力はあなたの設定や前提は **含めず** 、画面の内容に直接関連する情報のみを提供してください。
+    画面に表示されている内容を、3〜5文程度で簡潔に説明してください。
+    
+    【重要な制約】
+    - 推測や想像は絶対にしない。見えている内容だけを説明してください。
+    - 出力は必ず日本語のみで、他言語は一切含めないでください。
+    - 不明な部分がある場合は「〜が見えています」と見えるもののみ記述し、推測で補わないでください。
+    
+    このプロンプトは画面全体の要約用です。詳細な説明は別のプロンプトで行われます。
     
   detailedPrompt: |
-    画面に表示されている内容を、以下の順序で詳細に日本語で説明してください：
+    画面に表示されている内容を、視覚障害者にとって有用になるよう詳細に説明してください。以下の順序で説明してください：
     
-    1. 全体の概要: 何のアプリケーション・画面か（例: Teams会議、Excel、Webブラウザ）
-    2. 主要な情報: 最も重要な要素（タイトル、見出し、メインコンテンツ）
-    3. グラフ・図表: 種類、軸ラベル、データの傾向、具体的な数値を詳細に
+    1. 【アプリケーション・画面の種別】: 何のアプリか、どのような画面か（例：Google Sheets、Slack チャネル、GitHub Pull Request）
+    2. 【主要な情報・タイトル】: 見出し、ページタイトル、重要な文言
+    3. 【主要UI要素】: ボタン、メニュー、フォーム、タブなどの配置と役割（詳細な全列挙不要）
+    4. 【グラフ・図表・データ表示】: あれば、種類、軸ラベル、傾向、主な数値を説明
+    5. 【重要なテキスト内容】: ブロックテキスト、リスト、注釈など、意味を理解する上で必要な内容
     
-    曖昧な表現は避け、可能な限り正確かつ詳細に説明してください。
-    数値やテキストは正確に読み上げてください。
-    回答は必ず **日本語で** 行ってください。
+    【重要な制約】
+    - 推測や想像は絶対にしない。画像に見えているもののみを説明してください。
+    - 出力は必ず日本語のみで、他言語は一切含めないでください。
+    - 読み取りにくい部分は「読み取りが困難です」と記載し、推測で補わないでください。
+    - 全ての文言の完全な書き起こしは不要。視覚障害者が状況を理解する上で重要な情報を厳選してください。
+    - 不要な詳細（ボタン一つ一つ、すべての色の説明など）は省略しても構いません。
   
-  # 将来の拡張のために準備
   questionPrompt: |
-    以下の質問に基づいて、画面に表示されている内容について詳細に回答してください：
-    全体が把握できない場合でも、認識できた要素（テキストやボタンなど）を列挙してください。
-    回答は必ず **日本語で** 行ってください。
-
+    以下の質問に基づいて、画面に表示されている内容について詳細に回答してください。
+    
+    【重要な制約】
+    - 推測や想像は絶対にしない。画像に見えているもののみを説明してください。
+    - 出力は必ず日本語のみで、他言語は一切含めないでください。
+    - 全体が把握できない場合でも、認識できた要素のみを記述してください。
+    
     質問: {question}
   
-  temperature: 0.2
-  topP: 0.9
-  repetition_penalty: 1.15  # 繰り返しにペナルティ（1.0-2.0、デフォルト1.0）
+  # 生成パラメータ（保守的な設定）
+  temperature: 0.0       # 決定論的な出力で繰り返しを最小化
+  topP: 0.85             # 確率分布を適度に絞る
+  repetition_penalty: 1.3  # 繰り返しに強いペナルティ（1.0-2.0のレンジ）
   no_repeat_ngram_size: 3  # 同じN-gramの繰り返しを防ぐ
-  max_token: 5000  # モデルの最大トークン数
+  max_token: 5000        # モデルの最大トークン数
   
   # 機能別のmaxTokens設定
   maxTokens:
-    summary: 200      # 概要説明
-    detailed: 500     # 詳細説明
-    question: 200     # 質問回答
+    summary: 150       # 要約は短め（3〜5文に整える）
+    detailed: 400      # 詳細は現実的な長さ（段落レベル）
+    question: 200      # 質問回答
 
 # サーバー設定
 server:

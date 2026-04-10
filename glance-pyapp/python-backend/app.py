@@ -30,16 +30,9 @@ app = Flask(__name__)
 CORS(app)  # Electronからのアクセスを許可
 
 # ==========================================
-# 定数・設定 (ユーザーに合わせて変更してください)
+# グローバル変数・設定
 # ==========================================
-# ダウンロードするモデルのURL (InternVL 3.5 4B GGUF Q4_K_Mの例)
-# ※必ず実際に使用するモデルの直リンク(Raw URL)を設定してください
-#1B
-MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-1B-GGUF/resolve/main/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf?download=true"
-MMPROJ_DOWNLOAD_URL = "https://huggingface.co/QuantStack/InternVL3_5-1B-Instruct-gguf/resolve/main/mmproj-InternVL3_5-1B-Instruct-f16.gguf?download=true"
-#4B
-# MODEL_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true"
-# MMPROJ_DOWNLOAD_URL = "https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true"
+# ※ダウンロードURLは config.yaml のモデル定義から取得されます
 
 # グローバル変数
 current_model = None
@@ -110,47 +103,59 @@ def initialize_system():
     global current_model, config
     
     try:
-        # 1. 保存先パスの決定
+        # 1. アクティブモデルを config から取得
+        active_model_name = config.get('activeModel')
+        if not active_model_name or active_model_name not in config.get('models', {}):
+            raise ValueError(f"config.yaml に有効な activeModel が設定されていません: {active_model_name}")
+        
+        active_model_config = config['models'][active_model_name]
+        model_type = active_model_config.get('type')
+        
+        if model_type != 'internvl_gguf':
+            raise NotImplementedError(f"モデルタイプ '{model_type}' はまだサポートされていません")
+        
+        # 2. 保存先パスの決定とファイル名を config から抽出
         model_dir = get_writable_model_path()
-        #1B
-        model_filename = "OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf"
-        mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf"
-        #4B
-        # model_filename = "OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf"
-        # mmproj_filename = "mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf"
+        
+        # config の相対パスからファイル名を抽出
+        model_relative_path = active_model_config.get('path', '')
+        model_filename = os.path.basename(model_relative_path)
+        mmproj_relative_path = active_model_config.get('mmproj_path', '')
+        mmproj_filename = os.path.basename(mmproj_relative_path)
+        
         model_path = os.path.join(model_dir, model_filename)
         mmproj_path = os.path.join(model_dir, mmproj_filename)
         
-        # 2. モデルの存在確認とダウンロード
+        # 3. ダウンロードURL を config から取得
+        model_download_url = active_model_config.get('download_url')
+        mmproj_download_url = active_model_config.get('mmproj_download_url')
+        
+        if not model_download_url or not mmproj_download_url:
+            raise ValueError(f"モデル設定に download_url または mmproj_download_url が設定されていません")
+        
+        # 4. モデルの存在確認とダウンロード
         if not os.path.exists(model_path):
             app_state["status"] = "downloading"
             app_state["message"] = "AIモデルをダウンロードしています..."
             app_state["progress"] = 0
-            download_file(MODEL_DOWNLOAD_URL, model_path, "AIモデル")
+            download_file(model_download_url, model_path, "AIモデル")
             
         if not os.path.exists(mmproj_path):
             app_state["status"] = "downloading"
             app_state["message"] = "画像処理エンジンをダウンロードしています..."
             app_state["progress"] = 0
-            download_file(MMPROJ_DOWNLOAD_URL, mmproj_path, "画像処理エンジン")
+            download_file(mmproj_download_url, mmproj_path, "画像処理エンジン")
 
-        # 3. モデルのロード
+        # 5. モデルのロード
         app_state["status"] = "loading_model"
         app_state["message"] = "AIを起動しています..."
         app_state["progress"] = 100
         app_state["detail"] = ""
         
         print(f"\n{'='*60}")
-        print(f"📦 モデルをロード中: {model_path}")
+        print(f"📦 モデルをロード中: {active_model_name}")
+        print(f"   パス: {model_path}")
         print(f"{'='*60}\n")
-        
-        # configのパスを動的に書き換え
-        #1B
-        config['models']['internvl-3_5-1b-gguf']['path'] = model_path
-        config['models']['internvl-3_5-1b-gguf']['mmproj_path'] = mmproj_path
-        #4B
-        # config['models']['internvl-3_5-4b-gguf']['path'] = model_path
-        # config['models']['internvl-3_5-4b-gguf']['mmproj_path'] = mmproj_path
         
         # モデルをロード
         current_model = InternVLGGUFModel(
@@ -496,10 +501,12 @@ def analyze_stream():
             prompt = config['prompt']['systemPrompt']
             default_max_tokens = max_tokens_map['standard']
         
-        # パラメータ
+        # パラメータ（/analyze と同じオプションを適用）
         options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
+            'top_p': data.get('top_p', config['prompt']['topP']),
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.0)),
         }
         
         print(f"\n📸 ストリーミング分析リクエスト受信")
