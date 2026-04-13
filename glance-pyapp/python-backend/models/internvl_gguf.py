@@ -179,14 +179,14 @@ class InternVLGGUFModel(VisionLanguageModel):
         if not self.is_loaded:
             raise RuntimeError("モデルがロードされていません。先にload()を呼び出してください。")
         
-        print("🔮 画像分析を開始...")
+        # print("🔮 画像分析を開始...")
         
         try:
             # 画像をBase64にエンコード
             image_base64 = self._encode_image_to_base64(image)
             
             # メッセージ構築
-            print(f"📝 メッセージを構築中...sysprompt:{self.system_prompt},,,,,prompt:{prompt}")
+            # print(f"📝 メッセージを構築中...sysprompt:{self.system_prompt},,,,,prompt:{prompt}")
             messages = [
                 {
                     "role": "system",
