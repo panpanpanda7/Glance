@@ -1,12 +1,13 @@
 # Python依存関係
-# InternVL 3.5 GGUF + Flask API
+# Qwen3-VL GGUF (llama-server経由) + Flask API
 
 # Web Framework
 flask==3.1.0
 flask-cors==5.0.0
 
 # Machine Learning (llama.cpp版)
-llama-cpp-python>=0.3.0    # InternVL 3.5 GGUF対応
+llama-cpp-python>=0.3.0    # GGUF対応
+requests>=2.32.0           # llama-server REST API通信
 
 # Machine Learning (Transformers版 - 旧モデル用)
 torch==2.6.0

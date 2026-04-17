@@ -16,6 +16,8 @@ import threading
 import requests
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
+from models.qwen_vl_gguf import QwenVLGGUFModel
+from models.qwen3_vl_server import Qwen3VLServerModel
 
 # ==========================================
 # WindowsでのUnicode出力エラー対策
@@ -111,7 +113,7 @@ def initialize_system():
         active_model_config = config['models'][active_model_name]
         model_type = active_model_config.get('type')
         
-        if model_type != 'internvl_gguf':
+        if model_type not in ['internvl_gguf', 'qwen_vl_gguf', 'qwen3_vl_server']:
             raise NotImplementedError(f"モデルタイプ '{model_type}' はまだサポートされていません")
         
         # 2. 保存先パスの決定とファイル名を config から抽出
@@ -157,12 +159,28 @@ def initialize_system():
         print(f"   パス: {model_path}")
         print(f"{'='*60}\n")
         
-        # モデルをロード
-        current_model = InternVLGGUFModel(
-            model_path=model_path,
-            mmproj_path=mmproj_path,
-            draft_model_path=None
-        )
+        # モデルをロード（タイプ別）
+        if model_type == 'internvl_gguf':
+            current_model = InternVLGGUFModel(
+                model_path=model_path,
+                mmproj_path=mmproj_path,
+                draft_model_path=None
+            )
+        elif model_type == 'qwen_vl_gguf':
+            current_model = QwenVLGGUFModel(
+                model_path=model_path,
+                mmproj_path=mmproj_path,
+                draft_model_path=None
+            )
+        elif model_type == 'qwen3_vl_server':
+            # Qwen3-VL (llama-server経由)
+            server_url = active_model_config.get('server_url', 'http://127.0.0.1:8080')
+            current_model = Qwen3VLServerModel(
+                model_path=model_path,
+                mmproj_path=mmproj_path,
+                server_url=server_url
+            )
+        
         current_model.load()
         
         app_state["status"] = "ready"
@@ -213,7 +231,7 @@ def load_model(model_name: str):
     if model_config['type'] == 'internvl':
         current_model = InternVLModel(model_path)
     elif model_config['type'] == 'internvl_gguf':
-        # GGUF量子化モデル
+        # GGUF量子化モデル（InternVL）
         mmproj_path = model_config.get('mmproj_path')
         draft_model_path = model_config.get('draft_model_path')
         
@@ -234,9 +252,19 @@ def load_model(model_name: str):
             mmproj_path=mmproj_path,
             draft_model_path=draft_model_path
         )
-    elif model_config['type'] == 'qwen':
-        # 将来実装
-        raise NotImplementedError("Qwenモデルはまだ実装されていません")
+    elif model_config['type'] == 'qwen_vl_gguf':
+        # GGUF量子化モデル（Qwen VL）
+        mmproj_path = model_config.get('mmproj_path')
+        
+        # mmproj_pathも相対パスの場合は絶対パスに変換
+        if mmproj_path and not os.path.isabs(mmproj_path):
+            mmproj_path = os.path.join(os.path.dirname(__file__), mmproj_path)
+        
+        current_model = QwenVLGGUFModel(
+            model_path=model_path,
+            mmproj_path=mmproj_path,
+            draft_model_path=None
+        )
     else:
         raise ValueError(f"不明なモデルタイプ: {model_config['type']}")
     
@@ -268,18 +296,21 @@ def get_status():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     """
-    画像を分析してテキストを生成
+    画像を分析してテキストを生成（2段階生成）
     
     Request Body:
         {
             "image": "base64_encoded_image",
-            "prompt": "説明してください"
+            "promptType": "standard" | "detailed" | "question",
+            "question": "質問文（promptType='question'の場合）",
+            "debug": false
         }
     
     Response:
         {
             "success": true,
-            "result": "生成されたテキスト",
+            "result": "最終的な説明文",
+            "intermediate": {...},  // debug=true の場合のみ
             "model": {...}
         }
     """
@@ -300,47 +331,49 @@ def analyze():
                 'error': '画像データがありません'
             }), 400
         
-        # デフォルトプロンプトを使用
-        prompt = data.get('prompt', config['prompt']['systemPrompt'])
-        
         # プロンプトタイプを取得（デフォルトは 'standard'）
         prompt_type = data.get('promptType', 'standard')
+        debug = data.get('debug', False)
         
-        # プロンプトタイプに応じてプロンプトとmaxTokensを選択（使用頻度順）
+        # プロンプトタイプに応じてプロンプトとmaxTokensを選択
         max_tokens_map = {
-            'standard': config['prompt']['maxTokens']['summary'],    # 200
-            'detailed': config['prompt']['maxTokens']['detailed'],   # 500
+            'standard': config['prompt']['maxTokens']['summary'],    # 150
+            'detailed': config['prompt']['maxTokens']['detailed'],   # 400
             'question': config['prompt']['maxTokens']['question']    # 200
         }
         
-        if prompt_type == 'standard':  # 最も頻度が高い
-            prompt = data.get('prompt', config['prompt']['systemPrompt'])
+        if prompt_type == 'standard':
+            phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
         elif prompt_type == 'detailed':
-            prompt = data.get('prompt', config['prompt']['detailedPrompt'])
+            phase2_prompt_template = config['prompt']['phase2_detailed']
             default_max_tokens = max_tokens_map['detailed']
-        elif prompt_type == 'question':  # 将来の機能
+        elif prompt_type == 'question':
             question_text = data.get('question', '')
-            prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            phase2_prompt_template = config['prompt']['questionPrompt'].format(question=question_text)
             default_max_tokens = max_tokens_map['question']
         else:
             # 未知のプロンプトタイプの場合はデフォルト
-            prompt = data.get('prompt', config['prompt']['systemPrompt'])
+            phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
-            
-        # パラメータ
-        options = {
+        
+        # 第1段階・第2段階の共通パラメータ
+        phase1_options = {
+            'temperature': config['prompt']['temperature'],  # 0.0（決定論的）
+            'max_tokens': 300,
+            'top_p': config['prompt']['topP'],
+            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3)
+        }
+        
+        phase2_options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
-            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.0)),
-            'no_repeat_ngram_size': data.get('no_repeat_ngram_size', config['prompt'].get('no_repeat_ngram_size', 0))
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
         }
         
-        print(f"\n📸 画像分析リクエスト受信")
-        print(f"   画像サイズ: {len(image_base64)} bytes (base64)")
+        print(f"\n📸 【2段階分析】リクエスト受信")
         print(f"   プロンプトタイプ: {prompt_type}")
-        print(f"   プロンプト長: {len(prompt)} 文字")
         
         # Base64をPIL Imageに変換
         try:
@@ -353,23 +386,43 @@ def analyze():
                 'error': f'画像のデコードに失敗: {str(e)}'
             }), 400
         
-        # モデルで推論
+        # モデルロード確認
         if current_model is None or not current_model.is_loaded:
             return jsonify({
                 'success': False,
                 'error': 'モデルがロードされていません'
             }), 500
         
-        result = current_model.inference(image, prompt, **options)
+        # ========================
+        # 【第1段階】構造化抽出
+        # ========================
+        phase1_prompt = config['prompt']['phase1_extraction']
+        intermediate_json = current_model.inference_phase1_extraction(
+            image, phase1_prompt, **phase1_options
+        )
         
-        print(f"✅ 分析完了")
-        print(f"   結果: {result[:100]}..." if len(result) > 100 else f"   結果: {result}")
+        # ========================
+        # 【第2段階】自然文生成
+        # ========================
+        final_result = current_model.inference_phase2_generation(
+            intermediate_json, phase2_prompt_template, **phase2_options
+        )
         
-        return jsonify({
+        print(f"✅ 【2段階分析】完了")
+        print(f"   最終結果: {final_result[:100]}..." if len(final_result) > 100 else f"   最終結果: {final_result}")
+        
+        # レスポンス構築
+        response = {
             'success': True,
-            'result': result,
+            'result': final_result,
             'model': current_model.get_info()
-        })
+        }
+        
+        # debugモードでは中間JSONも返す
+        if debug:
+            response['intermediate'] = intermediate_json
+        
+        return jsonify(response)
         
     except Exception as e:
         print(f"❌ エラーが発生しました: {e}")
@@ -447,13 +500,17 @@ def get_models():
 @app.route('/analyze-stream', methods=['POST'])
 def analyze_stream():
     """
-    画像を分析してストリーミング形式でテキストを生成
+    画像を分析してストリーミング形式でテキストを生成（2段階生成）
     視覚障害者への即時フィードバック用
+    
+    フロー:
+    - 第1段階（非ストリーミング）: 画像から構造化JSON抽出
+    - 第2段階（ストリーミング）: JSONから自然文説明生成
     
     Request Body:
         {
             "image": "base64_encoded_image",
-            "promptType": "standard"
+            "promptType": "standard" | "detailed"
         }
     
     Response:
@@ -482,34 +539,41 @@ def analyze_stream():
         
         # プロンプトタイプに応じてプロンプトとmaxTokensを選択
         max_tokens_map = {
-            'standard': config['prompt']['maxTokens']['summary'],    # 200
-            'detailed': config['prompt']['maxTokens']['detailed'],   # 500
-            'question': config['prompt']['maxTokens']['question']    # 200
+            'standard': config['prompt']['maxTokens']['summary'],
+            'detailed': config['prompt']['maxTokens']['detailed'],
+            'question': config['prompt']['maxTokens']['question']
         }
         
         if prompt_type == 'standard':
-            prompt = config['prompt']['systemPrompt']
+            phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
         elif prompt_type == 'detailed':
-            prompt = config['prompt']['detailedPrompt']
+            phase2_prompt_template = config['prompt']['phase2_detailed']
             default_max_tokens = max_tokens_map['detailed']
         elif prompt_type == 'question':
             question_text = data.get('question', '')
-            prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            phase2_prompt_template = config['prompt']['questionPrompt'].format(question=question_text)
             default_max_tokens = max_tokens_map['question']
         else:
-            prompt = config['prompt']['systemPrompt']
+            phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
         
-        # パラメータ（/analyze と同じオプションを適用）
-        options = {
+        # 第1段階・第2段階のパラメータ
+        phase1_options = {
+            'temperature': config['prompt']['temperature'],
+            'max_tokens': 300,
+            'top_p': config['prompt']['topP'],
+            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3)
+        }
+        
+        phase2_options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
-            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.0)),
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
         }
         
-        print(f"\n📸 ストリーミング分析リクエスト受信")
+        print(f"\n📸 【2段階ストリーミング分析】リクエスト受信")
         print(f"   プロンプトタイプ: {prompt_type}")
         
         # Base64をPIL Imageに変換
@@ -530,15 +594,6 @@ def analyze_stream():
                 'error': 'モデルがロードされていません'
             }), 500
         
-        # ストリーミング非対応モデルの場合は通常の推論を実行
-        if not hasattr(current_model, 'inference_stream'):
-            result = current_model.inference(image, prompt, **options)
-            return jsonify({
-                'success': True,
-                'result': result,
-                'model': current_model.get_info()
-            })
-        
         def generate():
             """ストリーミングジェネレーター"""
             start_time = time.time()
@@ -546,7 +601,32 @@ def analyze_stream():
             first_token_time = None
             
             try:
-                for chunk in current_model.inference_stream(image, prompt, **options):
+                # ========================
+                # 【第1段階】構造化抽出（非ストリーミング）
+                # ========================
+                print(f"   🔄 第1段階実行中...")
+                phase1_prompt = config['prompt']['phase1_extraction']
+                intermediate_json = current_model.inference_phase1_extraction(
+                    image, phase1_prompt, **phase1_options
+                )
+                print(f"   ✅ 第1段階完了、第2段階実行中...")
+                
+                # ========================
+                # 【第2段階】自然文生成（ストリーミング）
+                # ========================
+                if not hasattr(current_model, 'inference_phase2_generation_stream'):
+                    # ストリーミング非対応の場合は通常推論で返す
+                    final_result = current_model.inference_phase2_generation(
+                        intermediate_json, phase2_prompt_template, **phase2_options
+                    )
+                    yield f"data: {final_result}\n\n"
+                    yield f"data: [DONE]\n\n"
+                    return
+                
+                # ストリーミング推論実行
+                for chunk in current_model.inference_phase2_generation_stream(
+                    intermediate_json, phase2_prompt_template, **phase2_options
+                ):
                     if first_token_time is None:
                         first_token_time = time.time() - start_time
                     
@@ -557,7 +637,7 @@ def analyze_stream():
                 total_time = time.time() - start_time
                 tps = token_count / total_time if total_time > 0 else 0
                 
-                print(f"✅ ストリーミング分析完了")
+                print(f"✅ 【2段階ストリーミング分析】完了")
                 print(f"   📊 TTFT (初動時間): {first_token_time:.2f}s")
                 print(f"   📊 TPS (トークン/秒): {tps:.2f}")
                 print(f"   📊 総時間: {total_time:.2f}s")
@@ -566,6 +646,8 @@ def analyze_stream():
                 
             except Exception as e:
                 print(f"❌ ストリーミングエラー: {e}")
+                import traceback
+                traceback.print_exc()
                 yield f"data: [ERROR] {str(e)}\n\n"
         
         return Response(
