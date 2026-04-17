@@ -217,10 +217,11 @@ def load_model(model_name: str):
     
     model_config = config['models'][model_name]
     model_path = model_config['path']
+    model_type = model_config.get('type')
     
     # 相対パスの場合は絶対パスに変換
     if not os.path.isabs(model_path):
-        model_path = os.path.join(os.path.dirname(__file__), model_path)
+        model_path = os.path.join(get_writable_model_path(), os.path.basename(model_path))
     
     # 既存モデルをアンロード
     if current_model is not None:
@@ -228,20 +229,20 @@ def load_model(model_name: str):
         current_model.unload()
     
     # 新しいモデルをロード
-    if model_config['type'] == 'internvl':
+    if model_type == 'internvl':
         current_model = InternVLModel(model_path)
-    elif model_config['type'] == 'internvl_gguf':
+    elif model_type == 'internvl_gguf':
         # GGUF量子化モデル（InternVL）
         mmproj_path = model_config.get('mmproj_path')
         draft_model_path = model_config.get('draft_model_path')
         
         # mmproj_pathも相対パスの場合は絶対パスに変換
         if mmproj_path and not os.path.isabs(mmproj_path):
-            mmproj_path = os.path.join(os.path.dirname(__file__), mmproj_path)
+            mmproj_path = os.path.join(get_writable_model_path(), os.path.basename(mmproj_path))
         
         # draft_model_pathも相対パスの場合は絶対パスに変換
         if draft_model_path and not os.path.isabs(draft_model_path):
-            draft_model_path = os.path.join(os.path.dirname(__file__), draft_model_path)
+            draft_model_path = os.path.join(get_writable_model_path(), os.path.basename(draft_model_path))
         
         # 投機的デコーディングが無効の場合はドラフトモデルパスをNoneに
         if not model_config.get('speculativeDecoding', False):
@@ -252,21 +253,44 @@ def load_model(model_name: str):
             mmproj_path=mmproj_path,
             draft_model_path=draft_model_path
         )
-    elif model_config['type'] == 'qwen_vl_gguf':
+    elif model_type == 'qwen_vl_gguf':
         # GGUF量子化モデル（Qwen VL）
         mmproj_path = model_config.get('mmproj_path')
         
         # mmproj_pathも相対パスの場合は絶対パスに変換
         if mmproj_path and not os.path.isabs(mmproj_path):
-            mmproj_path = os.path.join(os.path.dirname(__file__), mmproj_path)
+            mmproj_path = os.path.join(get_writable_model_path(), os.path.basename(mmproj_path))
         
         current_model = QwenVLGGUFModel(
             model_path=model_path,
             mmproj_path=mmproj_path,
             draft_model_path=None
         )
+    elif model_type == 'qwen3_vl_server':
+        # Qwen3-VL (llama-server経由)
+        mmproj_path = model_config.get('mmproj_path')
+        
+        # mmproj_pathも相対パスの場合は絶対パスに変換
+        if mmproj_path and not os.path.isabs(mmproj_path):
+            mmproj_path = os.path.join(get_writable_model_path(), os.path.basename(mmproj_path))
+        
+        server_url = model_config.get('server_url', 'http://127.0.0.1:8080')
+        server_host = model_config.get('server_host', '127.0.0.1')
+        server_port = model_config.get('server_port', 8080)
+        auto_start_server = model_config.get('auto_start_server', True)
+        bundled_server_binary = model_config.get('bundled_server_binary')
+        
+        current_model = Qwen3VLServerModel(
+            model_path=model_path,
+            mmproj_path=mmproj_path,
+            server_url=server_url,
+            server_host=server_host,
+            server_port=server_port,
+            auto_start_server=auto_start_server,
+            bundled_server_binary=bundled_server_binary
+        )
     else:
-        raise ValueError(f"不明なモデルタイプ: {model_config['type']}")
+        raise ValueError(f"不明なモデルタイプ: {model_type}")
     
     current_model.load()
     

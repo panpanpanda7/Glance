@@ -50,6 +50,10 @@
         "from": "resources/glance-backend",
         "to": "glance-backend",
         "filter": ["**/*"]
+      },
+      {
+        "from": "resources/llama-server.exe",
+        "to": "glance-backend/llama-server.exe"
       }
     ],
     "win": {

@@ -31,6 +31,43 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
+    # 1.5 llama-server.exe をダウンロード
+    - name: Download llama-server binary
+      run: |
+        # Windows 用 llama.cpp バイナリをダウンロード（最新リリース）
+        $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases" -Headers @{"Accept"="application/vnd.github.v3+json"}
+        $releases = $response.Content | ConvertFrom-Json
+        
+        # 最新リリースから Windows バイナリを探す
+        $found = $false
+        foreach ($release in $releases) {
+          if ($found) { break }
+          foreach ($asset in $release.assets) {
+            if ($asset.name -match ".*windows.*x86-64.*\.zip$") {
+              $downloadUrl = $asset.browser_download_url
+              Write-Host "Downloading: $downloadUrl"
+              Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
+              $found = $true
+              break
+            }
+          }
+        }
+        
+        if ($found) {
+          # ZIP を展開
+          Expand-Archive -Path "llama-cpp-bin.zip" -DestinationPath "llama-cpp-bin"
+          # llama-server.exe を探す
+          $exePath = Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+          if ($exePath) {
+            Copy-Item $exePath.FullName -Destination "./glance-pyapp/python-backend/llama-server.exe"
+            Write-Host "Copied llama-server.exe to python-backend"
+          } else {
+            Write-Host "WARNING: llama-server.exe not found in downloaded archive"
+          }
+        } else {
+          Write-Host "WARNING: Could not find Windows llama.cpp binary"
+        }
+
     # 2. Pythonバックエンドのビルド（モデルを含まないので高速）
     - name: Build Python Backend
       working-directory: ./glance-pyapp/python-backend
@@ -54,6 +91,11 @@ jobs:
       run: |
         New-Item -ItemType Directory -Force -Path ./glance-pyapp/electron/resources
         Copy-Item -Recurse -Force ./glance-pyapp/python-backend/dist/glance-backend ./glance-pyapp/electron/resources/
+        # llama-server.exe も同梱
+        if (Test-Path "./glance-pyapp/python-backend/llama-server.exe") {
+          Copy-Item "./glance-pyapp/python-backend/llama-server.exe" -Destination "./glance-pyapp/electron/resources/llama-server.exe"
+          Write-Host "Copied llama-server.exe to Electron resources"
+        }
 
     # 5. アプリのビルドとパッケージング
     - name: Build Electron App

@@ -1,6 +1,7 @@
 """
 Qwen3-VL GGUF (llama-server経由) モデル実装
 llama-server REST API を使った画像理解と2段階生成
+Windows 配布対応版（llama-server 自動起動機能付き）
 """
 
 import os
@@ -8,6 +9,10 @@ import io
 import base64
 import json
 import requests
+import subprocess
+import time
+import socket
+from pathlib import Path
 from PIL import Image
 from typing import Any, Dict, Generator, Optional
 from .model_interface import VisionLanguageModel
@@ -16,48 +21,276 @@ from .model_interface import VisionLanguageModel
 class Qwen3VLServerModel(VisionLanguageModel):
     """Qwen3-VL GGUF (llama-server REST API経由) モデル"""
     
-    def __init__(self, model_path: str, mmproj_path: str = None, server_url: str = "http://127.0.0.1:8080"):
+    def __init__(
+        self,
+        model_path: str,
+        mmproj_path: str = None,
+        server_url: str = "http://127.0.0.1:8080",
+        server_host: str = "127.0.0.1",
+        server_port: int = 8080,
+        auto_start_server: bool = True,
+        bundled_server_binary: str = None,
+        server_binary_path: str = None
+    ):
         """
         初期化
         
         Args:
-            model_path: メインモデルのGGUFファイルパス（参考用）
-            mmproj_path: ビジョンプロジェクタのGGUFファイルパス（参考用）
+            model_path: メインモデルのGGUFファイルパス
+            mmproj_path: ビジョンプロジェクタのGGUFファイルパス
             server_url: llama-server の URL
+            server_host: llama-server のホスト（デフォルト: 127.0.0.1）
+            server_port: llama-server のポート（デフォルト: 8080）
+            auto_start_server: サーバーを自動起動するか（デフォルト: True）
+            bundled_server_binary: 同梱サーバーバイナリの相対パス（例: llama-server.exe）
+            server_binary_path: llama-server のバイナリパス（明示的に指定）
         """
         super().__init__(model_path)
         self.mmproj_path = mmproj_path
         self.server_url = server_url
+        self.server_host = server_host
+        self.server_port = server_port
+        self.auto_start_server = auto_start_server
+        self.bundled_server_binary = bundled_server_binary
+        self.server_binary_path = server_binary_path
         self.health_checked = False
+        self.server_process = None
         
         # システムプロンプト（簡潔化）
         self.system_prompt = """視覚障害者向け画面説明アシスタントです。見えている内容のみを、日本語で説明してください。"""
     
+    def _find_server_binary(self) -> Optional[str]:
+        """
+        llama-server バイナリを探す（複数の場所を検索）
+        
+        優先順位:
+        1. server_binary_path で明示的に指定
+        2. 開発時: プロジェクトルート相対パス
+        3. frozen 実行時: アプリケーションリソース
+        4. システムPATH
+        """
+        
+        # 1. 明示的に指定されている場合
+        if self.server_binary_path:
+            if os.path.exists(self.server_binary_path):
+                print(f"✅ llama-server バイナリを検出（明示パス）: {self.server_binary_path}")
+                return self.server_binary_path
+        
+        # 2. 開発時（frozen=False）: プロジェクトルート相対パス
+        if not getattr(__import__('sys'), 'frozen', False):
+            # 開発ディレクトリから上にたどって探す
+            current = Path(__file__).parent.parent
+            for i in range(3):  # 3階層上まで探索
+                if self.bundled_server_binary:
+                    candidate = current / self.bundled_server_binary
+                else:
+                    # デフォルト: Windows なら .exe, Unix なら実行ファイル
+                    candidate = current / "llama-server.exe" if os.name == 'nt' else current / "llama-server"
+                
+                if candidate.exists():
+                    print(f"✅ llama-server バイナリを検出（開発時）: {candidate}")
+                    return str(candidate)
+                
+                current = current.parent
+        
+        # 3. frozen 実行時: アプリケーションリソース内
+        if getattr(__import__('sys'), 'frozen', False):
+            base_path = Path(getattr(__import__('sys'), '_MEIPASS', ''))
+            
+            # PyInstaller で frozen された場合
+            if self.bundled_server_binary:
+                candidate = base_path / self.bundled_server_binary
+            else:
+                candidate = base_path / "llama-server.exe" if os.name == 'nt' else base_path / "llama-server"
+            
+            if candidate.exists():
+                print(f"✅ llama-server バイナリを検出（frozen）: {candidate}")
+                return str(candidate)
+            
+            # Electron パッケージの場合
+            candidate = base_path.parent / "glance-backend" / "llama-server.exe"
+            if candidate.exists():
+                print(f"✅ llama-server バイナリを検出（Electron）: {candidate}")
+                return str(candidate)
+        
+        # 4. システムPATHから探す
+        if os.name == 'nt':
+            result = os.system(f"where llama-server > nul 2>&1")
+            if result == 0:
+                print(f"✅ llama-server をシステムPATHから検出")
+                return "llama-server"
+        else:
+            result = os.system(f"which llama-server > /dev/null 2>&1")
+            if result == 0:
+                print(f"✅ llama-server をシステムPATHから検出")
+                return "llama-server"
+        
+        return None
+    
+    def _is_port_available(self, host: str, port: int) -> bool:
+        """ポートが利用可能か確認"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result != 0
+        except Exception:
+            return True
+    
+    def _start_server(self) -> bool:
+        """llama-server をサブプロセスで起動"""
+        if not self.auto_start_server:
+            print("⚠️ auto_start_server=False のため、llama-server の自動起動をスキップします")
+            return False
+        
+        # バイナリを探す
+        server_binary = self._find_server_binary()
+        if not server_binary:
+            print("❌ llama-server バイナリが見つかりません")
+            print("   以下から Windows バイナリをダウンロードしてください:")
+            print("   https://github.com/ggerganov/llama.cpp/releases")
+            return False
+        
+        # ポート確認
+        if not self._is_port_available(self.server_host, self.server_port):
+            print(f"⚠️ ポート {self.server_port} は既に使用されています")
+            print(f"   既に起動しているサーバーを確認してください")
+            return False
+        
+        print(f"🚀 llama-server を起動中...")
+        print(f"   バイナリ: {server_binary}")
+        print(f"   モデル: {self.model_path}")
+        print(f"   mmproj: {self.mmproj_path}")
+        print(f"   アドレス: {self.server_host}:{self.server_port}")
+        
+        try:
+            # llama-server を起動
+            cmd = [
+                server_binary,
+                "-m", self.model_path,
+                "--mmproj", self.mmproj_path,
+                "--host", self.server_host,
+                "--port", str(self.server_port),
+                "--log-level", "warn"  # ログレベルを調整
+            ]
+            
+            # Windows の場合は CREATE_NEW_PROCESS_GROUP を使う
+            if os.name == 'nt':
+                self.server_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
+                )
+            else:
+                self.server_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+                )
+            
+            print(f"✅ llama-server プロセスを起動しました (PID: {self.server_process.pid})")
+            return True
+            
+        except Exception as e:
+            print(f"❌ llama-server 起動エラー: {e}")
+            return False
+    
+    def _wait_for_server(self, max_retries: int = 60, retry_interval: float = 1.0) -> bool:
+        """
+        llama-server が起動するまで待機（health check）
+        
+        Args:
+            max_retries: 最大試行回数（デフォルト: 60回 = 60秒）
+            retry_interval: 再試行間隔（デフォルト: 1.0秒）
+        
+        Returns:
+            起動完了: True, タイムアウト: False
+        """
+        print(f"⏳ llama-server の起動を待機中（最大{max_retries * retry_interval}秒）...")
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(f"{self.server_url}/health", timeout=2)
+                if response.status_code == 200:
+                    print(f"✅ llama-server が起動完了しました（{attempt * retry_interval:.1f}秒）")
+                    return True
+            except requests.exceptions.RequestException:
+                pass
+            
+            # 進捗を表示（10秒ごと）
+            if (attempt + 1) % 10 == 0:
+                print(f"   まだ待機中... ({(attempt + 1) * retry_interval:.0f}秒経過)")
+            
+            time.sleep(retry_interval)
+        
+        print(f"❌ llama-server の起動がタイムアウトしました（{max_retries * retry_interval}秒以上待機）")
+        return False
+    
     def load(self) -> None:
-        """llama-server への接続確認"""
+        """llama-server への接続確認と自動起動"""
         if self.is_loaded:
             print("⚠️ モデルは既にロードされています")
             return
         
         print(f"📦 Qwen3-VL Server接続確認中: {self.server_url}")
         
+        # 1. まず health check を試みる（既に起動しているかもしれない）
         try:
-            # health check
             response = requests.get(f"{self.server_url}/health", timeout=5)
             if response.status_code == 200:
-                print(f"✅ llama-server 接続成功")
+                print(f"✅ llama-server は既に起動しています")
                 self.health_checked = True
                 self.is_loaded = True
-            else:
-                raise ConnectionError(f"Server health check failed: {response.status_code}")
-        except Exception as e:
-            print(f"❌ llama-server 接続失敗: {e}")
-            print(f"   llama-server を起動してください:")
-            print(f"   llama-server \\")
-            print(f"     -m {self.model_path} \\")
-            print(f"     --mmproj {self.mmproj_path} \\")
-            print(f"     --host 127.0.0.1 --port 8080")
-            raise
+                return
+        except requests.exceptions.RequestException:
+            pass
+        
+        # 2. まだ起動していない場合は自動起動
+        if self.auto_start_server:
+            print(f"ℹ️ llama-server がまだ起動していないため、自動起動を試みます...")
+            
+            if not self._start_server():
+                raise RuntimeError(
+                    f"❌ llama-server の起動に失敗しました\n\n"
+                    f"以下を確認してください:\n"
+                    f"1. llama.cpp のバイナリが同梱されているか\n"
+                    f"2. モデルファイルが存在するか: {self.model_path}\n"
+                    f"3. mmproj ファイルが存在するか: {self.mmproj_path}\n"
+                    f"4. ポート {self.server_port} が利用可能か\n\n"
+                    f"llama-server を手動で起動する場合:\n"
+                    f"llama-server -m {self.model_path} --mmproj {self.mmproj_path} "
+                    f"--host {self.server_host} --port {self.server_port}"
+                )
+            
+            # 起動待機
+            if not self._wait_for_server():
+                raise RuntimeError(
+                    f"❌ llama-server が起動しません（タイムアウト）\n\n"
+                    f"以下を確認してください:\n"
+                    f"1. llama-server が実行中か（プロセスマネージャーで確認）\n"
+                    f"2. GPU / CPU が十分にあるか\n"
+                    f"3. メモリが十分にあるか（最低 8GB 必要）\n"
+                    f"4. ディスクスペースが十分にあるか\n"
+                    f"5. Windows Defender や他のセキュリティソフトがブロックしていないか"
+                )
+        else:
+            # auto_start_server=False の場合は手動起動を指示
+            raise RuntimeError(
+                f"❌ llama-server に接続できません\n\n"
+                f"auto_start_server=False のため自動起動がスキップされています\n"
+                f"手動で llama-server を起動してください:\n\n"
+                f"llama-server \\\n"
+                f"  -m {self.model_path} \\\n"
+                f"  --mmproj {self.mmproj_path} \\\n"
+                f"  --host {self.server_host} --port {self.server_port}"
+            )
+        
+        self.health_checked = True
+        self.is_loaded = True
+        print(f"✅ llama-server への接続が確立されました")
     
     def _encode_image_to_base64(self, image: Image.Image) -> str:
         """PIL画像をBase64にエンコード"""
@@ -281,10 +514,15 @@ class Qwen3VLServerModel(VisionLanguageModel):
             raise
     
     def unload(self) -> None:
-        """llama-server の接続をクローズ（サーバーは起動したままになる）"""
+        """llama-server の接続をクローズ"""
         self.is_loaded = False
         self.health_checked = False
-        print("🗑️ llama-server との接続をクローズしました（サーバーは起動したままです）")
+        print("🗑️ llama-server との接続をクローズしました")
+        
+        # サーバープロセスが起動済みの場合は終了しない
+        # （複数のクライアントが使用している可能性があるため）
+        if self.server_process:
+            print("   注: llama-server プロセスは実行中です（必要に応じて手動で終了してください）")
     
     def _extract_json_block(self, text: str) -> str:
         """テキストからJSONブロックを抽出"""
@@ -574,5 +812,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
             'mmproj_path': self.mmproj_path,
             'is_loaded': self.is_loaded,
             'server_url': self.server_url,
+            'server_host': self.server_host,
+            'server_port': self.server_port,
+            'auto_start_server': self.auto_start_server,
             'type': 'qwen3_vl_server'
         }
