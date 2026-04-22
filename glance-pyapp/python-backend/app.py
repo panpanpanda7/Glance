@@ -175,10 +175,19 @@ def initialize_system():
         elif model_type == 'qwen3_vl_server':
             # Qwen3-VL (llama-server経由)
             server_url = active_model_config.get('server_url', 'http://127.0.0.1:8080')
+            server_host = active_model_config.get('server_host', '127.0.0.1')
+            server_port = active_model_config.get('server_port', 8080)
+            auto_start_server = active_model_config.get('auto_start_server', True)
+            bundled_server_binary = active_model_config.get('bundled_server_binary')
+            
             current_model = Qwen3VLServerModel(
                 model_path=model_path,
                 mmproj_path=mmproj_path,
-                server_url=server_url
+                server_url=server_url,
+                server_host=server_host,
+                server_port=server_port,
+                auto_start_server=auto_start_server,
+                bundled_server_binary=bundled_server_binary
             )
         
         current_model.load()

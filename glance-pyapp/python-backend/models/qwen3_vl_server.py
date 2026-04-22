@@ -12,6 +12,7 @@ import requests
 import subprocess
 import time
 import socket
+import signal
 from pathlib import Path
 from PIL import Image
 from typing import Any, Dict, Generator, Optional
@@ -55,6 +56,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.server_binary_path = server_binary_path
         self.health_checked = False
         self.server_process = None
+        self.started_server_by_self = False  # 自前起動したかどうか
         
         # システムプロンプト（簡潔化）
         self.system_prompt = """視覚障害者向け画面説明アシスタントです。見えている内容のみを、日本語で説明してください。"""
@@ -192,6 +194,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 )
             
             print(f"✅ llama-server プロセスを起動しました (PID: {self.server_process.pid})")
+            self.started_server_by_self = True  # 自前起動フラグを設定
             return True
             
         except Exception as e:
@@ -519,10 +522,31 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.health_checked = False
         print("🗑️ llama-server との接続をクローズしました")
         
-        # サーバープロセスが起動済みの場合は終了しない
-        # （複数のクライアントが使用している可能性があるため）
-        if self.server_process:
-            print("   注: llama-server プロセスは実行中です（必要に応じて手動で終了してください）")
+        # 自前起動したサーバープロセスのみを停止
+        if self.server_process and self.started_server_by_self:
+            try:
+                print(f"   🛑 llama-server を停止します (PID: {self.server_process.pid})")
+                
+                if os.name == 'nt':
+                    # Windows: CTRL_BREAK_EVENT でプロセスグループを停止
+                    os.kill(self.server_process.pid, signal.CTRL_BREAK_EVENT)
+                else:
+                    # Unix: プロセスグループを SIGTERM で停止
+                    os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
+                
+                # プロセス終了を待つ（タイムアウト: 5秒）
+                try:
+                    self.server_process.wait(timeout=5)
+                    print("   ✅ llama-server を停止しました")
+                except subprocess.TimeoutExpired:
+                    print("   ⚠️ llama-server の停止がタイムアウト、強制終了します")
+                    self.server_process.kill()
+                    self.server_process.wait()
+                    
+            except Exception as e:
+                print(f"   ⚠️ llama-server 停止中にエラー: {e}")
+        elif self.server_process and not self.started_server_by_self:
+            print("   注: llama-server は外部で起動されています（停止しません）")
     
     def _extract_json_block(self, text: str) -> str:
         """テキストからJSONブロックを抽出"""
