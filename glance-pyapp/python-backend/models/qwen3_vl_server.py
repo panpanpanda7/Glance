@@ -67,33 +67,87 @@ class Qwen3VLServerModel(VisionLanguageModel):
         
         優先順位:
         1. server_binary_path で明示的に指定
-        2. 開発時: プロジェクトルート相対パス
-        3. frozen 実行時: アプリケーションリソース
-        4. システムPATH
+        2. frozen 実行時【最優先】: sys.executable と同じディレクトリ
+        3. frozen 実行時: カレントディレクトリ
+        4. frozen 実行時: Electronリソース
+        5. 開発時: プロジェクトルート相対パス
+        6. システムPATH
         """
         
         print(f"\n{'='*60}")
         print(f"🔍 llama-server バイナリを検索中...")
         print(f"{'='*60}")
         
+        searched_paths = []  # 検索したパスを記録
+        
         # 1. 明示的に指定されている場合
         if self.server_binary_path:
             print(f"\n[検索1] 明示的に指定されたパスを確認...")
             print(f"   パス: {self.server_binary_path}")
+            searched_paths.append(str(self.server_binary_path))
             if os.path.exists(self.server_binary_path):
                 print(f"   ✅ 検出しました")
                 return self.server_binary_path
             else:
                 print(f"   ❌ ファイルが見つかりません")
         
-        # 2. 開発時（frozen=False）: プロジェクトルート相対パス
+        # 2. 実行環境の確認
         is_frozen = getattr(__import__('sys'), 'frozen', False)
-        print(f"\n[検索2] 実行環境の確認...")
+        print(f"\n[環境確認] 実行環境...")
         print(f"   frozen: {is_frozen}")
         
-        if not is_frozen:
+        if is_frozen:
+            print(f"   → 本番環境モード（PyInstallerでビルドされている）")
+            print(f"   sys.executable: {__import__('sys').executable}")
+            
+            # 【最優先】sys.executable と同じディレクトリ
+            # （glance-backend.exe と同じフォルダ）
+            print(f"\n[検索2] sys.executable と同じディレクトリ【最優先】...")
+            exe_dir = Path(__import__('sys').executable).parent
+            
+            if self.bundled_server_binary:
+                candidate = exe_dir / self.bundled_server_binary
+            else:
+                candidate = exe_dir / "llama-server.exe" if os.name == 'nt' else exe_dir / "llama-server"
+            
+            print(f"   候補: {candidate}")
+            searched_paths.append(str(candidate))
+            
+            if candidate.exists():
+                print(f"   ✅ 検出しました！【最優先候補で採用】")
+                return str(candidate)
+            else:
+                print(f"   ❌ 見つかりません")
+            
+            # カレントディレクトリ
+            print(f"\n[検索3] カレントディレクトリ...")
+            cwd_candidate = Path.cwd() / (self.bundled_server_binary or ("llama-server.exe" if os.name == 'nt' else "llama-server"))
+            print(f"   候補: {cwd_candidate}")
+            searched_paths.append(str(cwd_candidate))
+            
+            if cwd_candidate.exists():
+                print(f"   ✅ 検出しました！")
+                return str(cwd_candidate)
+            else:
+                print(f"   ❌ 見つかりません")
+            
+            # Electron パッケージの場合（別フォルダ）
+            print(f"\n[検索4] Electronリソース（resources/glance-backend）...")
+            base_path = Path(getattr(__import__('sys'), '_MEIPASS', ''))
+            electron_candidate = base_path.parent / "glance-backend" / "llama-server.exe"
+            print(f"   候補: {electron_candidate}")
+            searched_paths.append(str(electron_candidate))
+            
+            if electron_candidate.exists():
+                print(f"   ✅ 検出しました！")
+                return str(electron_candidate)
+            else:
+                print(f"   ❌ 見つかりません")
+        else:
+            # 開発時（frozen=False）: プロジェクトルート相対パス
             print(f"   → 開発環境モード（PyInstallerでビルドされていない）")
-            # 開発ディレクトリから上にたどって探す
+            
+            print(f"\n[検索2] プロジェクトルート相対パス...")
             current = Path(__file__).parent.parent
             print(f"   基準パス: {current}")
             
@@ -103,10 +157,10 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 if self.bundled_server_binary:
                     candidate = current / self.bundled_server_binary
                 else:
-                    # デフォルト: Windows なら .exe, Unix なら実行ファイル
                     candidate = current / "llama-server.exe" if os.name == 'nt' else current / "llama-server"
                 
                 print(f"      候補: {candidate}")
+                searched_paths.append(str(candidate))
                 
                 if candidate.exists():
                     print(f"      ✅ 検出しました！")
@@ -116,41 +170,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 
                 current = current.parent
         
-        # 3. frozen 実行時: アプリケーションリソース内
-        if is_frozen:
-            print(f"   → 本番環境モード（PyInstallerでビルドされている）")
-            base_path = Path(getattr(__import__('sys'), '_MEIPASS', ''))
-            print(f"   _MEIPASS: {base_path}")
-            
-            # PyInstaller で frozen された場合
-            print(f"\n[検索3] PyInstallerリソース内を検索...")
-            
-            if self.bundled_server_binary:
-                candidate = base_path / self.bundled_server_binary
-            else:
-                candidate = base_path / "llama-server.exe" if os.name == 'nt' else base_path / "llama-server"
-            
-            print(f"   候補1: {candidate}")
-            
-            if candidate.exists():
-                print(f"   ✅ 検出しました！")
-                return str(candidate)
-            else:
-                print(f"   ❌ 見つかりません")
-            
-            # Electron パッケージの場合（別フォルダ）
-            print(f"\n[検索4] Electronパッケージ（glance-backend）内を検索...")
-            candidate = base_path.parent / "glance-backend" / "llama-server.exe"
-            print(f"   候補2: {candidate}")
-            
-            if candidate.exists():
-                print(f"   ✅ 検出しました！")
-                return str(candidate)
-            else:
-                print(f"   ❌ 見つかりません")
-        
-        # 4. システムPATHから探す
-        print(f"\n[検索5] システムPATHから検索...")
+        # 最後の手段: システムPATH
+        print(f"\n[検索5] システムPATH...")
         
         if os.name == 'nt':
             result = os.system(f"where llama-server > nul 2>&1")
@@ -169,7 +190,13 @@ class Qwen3VLServerModel(VisionLanguageModel):
         
         print(f"\n{'='*60}")
         print(f"❌ llama-server バイナリが見つかりませんでした")
+        print(f"   検索したパス:")
+        for path in searched_paths:
+            print(f"     - {path}")
         print(f"{'='*60}\n")
+        
+        # 検索したパスリストを返す
+        self._searched_binary_paths = searched_paths
         return None
     
     def _is_port_available(self, host: str, port: int) -> bool:
@@ -183,33 +210,70 @@ class Qwen3VLServerModel(VisionLanguageModel):
         except Exception:
             return True
     
-    def _start_server(self) -> bool:
-        """llama-server をサブプロセスで起動"""
+    def _get_server_log_path(self) -> str:
+        """llama-server ログファイルのパスを取得"""
+        if getattr(__import__('sys'), 'frozen', False):
+            # EXE実行時はユーザーのAppDataフォルダを使用
+            if os.name == 'nt':
+                base_dir = os.path.join(os.environ.get('APPDATA', ''), 'Glance', 'logs')
+            elif os.name == 'posix':
+                base_dir = os.path.join(os.path.expanduser('~'), '.config', 'Glance', 'logs')
+            else:
+                base_dir = os.path.join(os.path.expanduser('~'), '.Glance', 'logs')
+        else:
+            # 開発時はローカルのlogsフォルダ
+            base_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, 'llama-server.log')
+    
+    def _start_server(self) -> tuple:
+        """
+        llama-server をサブプロセスで起動
+        
+        Returns:
+            (成功: bool, エラー詳細: str or None)
+        """
         if not self.auto_start_server:
             print("⚠️ auto_start_server=False のため、llama-server の自動起動をスキップします")
-            return False
+            return False, "auto_start_server=False"
         
         # バイナリを探す
         server_binary = self._find_server_binary()
         if not server_binary:
-            print("❌ llama-server バイナリが見つかりません")
-            print("   以下から Windows バイナリをダウンロードしてください:")
-            print("   https://github.com/ggerganov/llama.cpp/releases")
-            return False
+            error_msg = (
+                f"❌ llama-server バイナリが見つかりません\n"
+                f"   検索したパス: {getattr(self, '_searched_binary_paths', [])}\n"
+                f"   以下から Windows バイナリをダウンロードしてください:\n"
+                f"   https://github.com/ggerganov/llama.cpp/releases"
+            )
+            print(error_msg)
+            return False, "バイナリ未検出: " + str(getattr(self, '_searched_binary_paths', []))
         
         # ポート確認
         if not self._is_port_available(self.server_host, self.server_port):
-            print(f"⚠️ ポート {self.server_port} は既に使用されています")
-            print(f"   既に起動しているサーバーを確認してください")
-            return False
+            error_msg = f"❌ ポート {self.server_port} は既に使用されています"
+            print(error_msg)
+            return False, f"ポート競合: {self.server_port}"
+        
+        # ログファイルパスを取得
+        log_file_path = self._get_server_log_path()
         
         print(f"🚀 llama-server を起動中...")
         print(f"   バイナリ: {server_binary}")
         print(f"   モデル: {self.model_path}")
         print(f"   mmproj: {self.mmproj_path}")
         print(f"   アドレス: {self.server_host}:{self.server_port}")
+        print(f"   ログ出力: {log_file_path}")
         
         try:
+            # ログファイルをオープン（追記モード）
+            try:
+                log_file = open(log_file_path, 'a', encoding='utf-8')
+            except Exception as e:
+                print(f"⚠️ ログファイルのオープンに失敗: {e}")
+                log_file = subprocess.DEVNULL
+            
             # llama-server を起動
             cmd = [
                 server_binary,
@@ -224,25 +288,51 @@ class Qwen3VLServerModel(VisionLanguageModel):
             if os.name == 'nt':
                 self.server_process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=log_file,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                 )
             else:
                 self.server_process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=log_file,
                     preexec_fn=os.setsid if hasattr(os, 'setsid') else None
                 )
             
             print(f"✅ llama-server プロセスを起動しました (PID: {self.server_process.pid})")
-            self.started_server_by_self = True  # 自前起動フラグを設定
-            return True
             
+            # 起動直後クラッシュチェック（1秒待機後に確認）
+            time.sleep(1)
+            return_code = self.server_process.poll()
+            
+            if return_code is not None:
+                # プロセスが既に終了している
+                error_msg = f"❌ llama-server が起動直後に終了しました (return code: {return_code})"
+                print(error_msg)
+                print(f"   ログを確認してください: {log_file_path}")
+                return False, f"起動直後クラッシュ: return_code={return_code}, log={log_file_path}"
+            
+            self.started_server_by_self = True  # 自前起動フラグを設定
+            self._server_log_path = log_file_path  # ログパスを保存
+            return True, None
+            
+        except subprocess.CalledProcessError as e:
+            error_msg = f"❌ llama-server 起動エラー (CalledProcessError): {e}"
+            print(error_msg)
+            return False, f"subprocess エラー: {str(e)}"
+        except FileNotFoundError as e:
+            error_msg = f"❌ llama-server バイナリが実行できません (FileNotFoundError): {e}"
+            print(error_msg)
+            return False, f"ファイル不検出: {str(e)}"
+        except PermissionError as e:
+            error_msg = f"❌ llama-server バイナリの実行権限がありません (PermissionError): {e}"
+            print(error_msg)
+            return False, f"実行権限エラー: {str(e)}"
         except Exception as e:
-            print(f"❌ llama-server 起動エラー: {e}")
-            return False
+            error_msg = f"❌ llama-server 起動エラー: {e}"
+            print(error_msg)
+            return False, f"予期しないエラー: {str(e)}"
     
     def _wait_for_server(self, max_retries: int = 60, retry_interval: float = 1.0) -> bool:
         """
@@ -298,29 +388,71 @@ class Qwen3VLServerModel(VisionLanguageModel):
         if self.auto_start_server:
             print(f"ℹ️ llama-server がまだ起動していないため、自動起動を試みます...")
             
-            if not self._start_server():
-                raise RuntimeError(
-                    f"❌ llama-server の起動に失敗しました\n\n"
-                    f"以下を確認してください:\n"
-                    f"1. llama.cpp のバイナリが同梱されているか\n"
-                    f"2. モデルファイルが存在するか: {self.model_path}\n"
-                    f"3. mmproj ファイルが存在するか: {self.mmproj_path}\n"
-                    f"4. ポート {self.server_port} が利用可能か\n\n"
-                    f"llama-server を手動で起動する場合:\n"
-                    f"llama-server -m {self.model_path} --mmproj {self.mmproj_path} "
-                    f"--host {self.server_host} --port {self.server_port}"
-                )
+            success, error_detail = self._start_server()
+            if not success:
+                # エラー詳細を含めた詳しいエラーメッセージを生成
+                error_msg = f"❌ llama-server の起動に失敗しました\n\n"
+                
+                # エラー詳細を追加
+                if error_detail:
+                    error_msg += f"失敗の原因: {error_detail}\n\n"
+                
+                # バイナリ未検出の場合
+                if "バイナリ未検出" in (error_detail or ""):
+                    error_msg += f"探索したパス:\n"
+                    for path in getattr(self, '_searched_binary_paths', []):
+                        error_msg += f"  - {path}\n"
+                    error_msg += f"\n以下から Windows バイナリをダウンロードしてください:\n"
+                    error_msg += f"https://github.com/ggerganov/llama.cpp/releases\n"
+                
+                # ポート競合の場合
+                elif "ポート競合" in (error_detail or ""):
+                    error_msg += f"既に起動しているプロセスを確認してください。\n"
+                    if self._server_log_path:
+                        error_msg += f"ログを確認: {self._server_log_path}\n"
+                
+                # 起動直後クラッシュの場合
+                elif "起動直後クラッシュ" in (error_detail or ""):
+                    if hasattr(self, '_server_log_path') and self._server_log_path:
+                        error_msg += f"llama-server のログを確認してください:\n"
+                        error_msg += f"  {self._server_log_path}\n\n"
+                    error_msg += f"クラッシュ原因の可能性:\n"
+                    error_msg += f"  - DLL ライブラリが見つからない\n"
+                    error_msg += f"  - GPU ドライバが古い\n"
+                    error_msg += f"  - メモリ不足\n"
+                
+                # 共通の確認項目
+                error_msg += f"\n確認項目:\n"
+                error_msg += f"1. モデルファイルが存在するか: {self.model_path}\n"
+                error_msg += f"2. mmproj ファイルが存在するか: {self.mmproj_path}\n"
+                error_msg += f"3. ポート {self.server_port} が利用可能か\n"
+                error_msg += f"4. メモリが十分にあるか（最低 8GB 必要）\n"
+                error_msg += f"5. Windows Defender や他のセキュリティソフトがブロックしていないか\n\n"
+                error_msg += f"llama-server を手動で起動する場合:\n"
+                error_msg += f"llama-server -m {self.model_path} --mmproj {self.mmproj_path} "
+                error_msg += f"--host {self.server_host} --port {self.server_port}"
+                
+                raise RuntimeError(error_msg)
             
             # 起動待機
             if not self._wait_for_server():
+                log_path_msg = ""
+                if hasattr(self, '_server_log_path') and self._server_log_path:
+                    log_path_msg = f"ログを確認: {self._server_log_path}\n\n"
+                
                 raise RuntimeError(
                     f"❌ llama-server が起動しません（タイムアウト）\n\n"
+                    f"{log_path_msg}"
                     f"以下を確認してください:\n"
                     f"1. llama-server が実行中か（プロセスマネージャーで確認）\n"
                     f"2. GPU / CPU が十分にあるか\n"
                     f"3. メモリが十分にあるか（最低 8GB 必要）\n"
                     f"4. ディスクスペースが十分にあるか\n"
-                    f"5. Windows Defender や他のセキュリティソフトがブロックしていないか"
+                    f"5. Windows Defender や他のセキュリティソフトがブロックしていないか\n"
+                    f"6. モデルファイルのロード中にクラッシュしていないか\n"
+                    f"\nllama-server を手動で起動する場合:\n"
+                    f"llama-server -m {self.model_path} --mmproj {self.mmproj_path} "
+                    f"--host {self.server_host} --port {self.server_port}"
                 )
         else:
             # auto_start_server=False の場合は手動起動を指示
