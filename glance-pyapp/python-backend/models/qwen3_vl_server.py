@@ -72,61 +72,104 @@ class Qwen3VLServerModel(VisionLanguageModel):
         4. システムPATH
         """
         
+        print(f"\n{'='*60}")
+        print(f"🔍 llama-server バイナリを検索中...")
+        print(f"{'='*60}")
+        
         # 1. 明示的に指定されている場合
         if self.server_binary_path:
+            print(f"\n[検索1] 明示的に指定されたパスを確認...")
+            print(f"   パス: {self.server_binary_path}")
             if os.path.exists(self.server_binary_path):
-                print(f"✅ llama-server バイナリを検出（明示パス）: {self.server_binary_path}")
+                print(f"   ✅ 検出しました")
                 return self.server_binary_path
+            else:
+                print(f"   ❌ ファイルが見つかりません")
         
         # 2. 開発時（frozen=False）: プロジェクトルート相対パス
-        if not getattr(__import__('sys'), 'frozen', False):
+        is_frozen = getattr(__import__('sys'), 'frozen', False)
+        print(f"\n[検索2] 実行環境の確認...")
+        print(f"   frozen: {is_frozen}")
+        
+        if not is_frozen:
+            print(f"   → 開発環境モード（PyInstallerでビルドされていない）")
             # 開発ディレクトリから上にたどって探す
             current = Path(__file__).parent.parent
+            print(f"   基準パス: {current}")
+            
             for i in range(3):  # 3階層上まで探索
+                print(f"\n   [階層 {i}] {current}")
+                
                 if self.bundled_server_binary:
                     candidate = current / self.bundled_server_binary
                 else:
                     # デフォルト: Windows なら .exe, Unix なら実行ファイル
                     candidate = current / "llama-server.exe" if os.name == 'nt' else current / "llama-server"
                 
+                print(f"      候補: {candidate}")
+                
                 if candidate.exists():
-                    print(f"✅ llama-server バイナリを検出（開発時）: {candidate}")
+                    print(f"      ✅ 検出しました！")
                     return str(candidate)
+                else:
+                    print(f"      ❌ 見つかりません")
                 
                 current = current.parent
         
         # 3. frozen 実行時: アプリケーションリソース内
-        if getattr(__import__('sys'), 'frozen', False):
+        if is_frozen:
+            print(f"   → 本番環境モード（PyInstallerでビルドされている）")
             base_path = Path(getattr(__import__('sys'), '_MEIPASS', ''))
+            print(f"   _MEIPASS: {base_path}")
             
             # PyInstaller で frozen された場合
+            print(f"\n[検索3] PyInstallerリソース内を検索...")
+            
             if self.bundled_server_binary:
                 candidate = base_path / self.bundled_server_binary
             else:
                 candidate = base_path / "llama-server.exe" if os.name == 'nt' else base_path / "llama-server"
             
-            if candidate.exists():
-                print(f"✅ llama-server バイナリを検出（frozen）: {candidate}")
-                return str(candidate)
+            print(f"   候補1: {candidate}")
             
-            # Electron パッケージの場合
-            candidate = base_path.parent / "glance-backend" / "llama-server.exe"
             if candidate.exists():
-                print(f"✅ llama-server バイナリを検出（Electron）: {candidate}")
+                print(f"   ✅ 検出しました！")
                 return str(candidate)
+            else:
+                print(f"   ❌ 見つかりません")
+            
+            # Electron パッケージの場合（別フォルダ）
+            print(f"\n[検索4] Electronパッケージ（glance-backend）内を検索...")
+            candidate = base_path.parent / "glance-backend" / "llama-server.exe"
+            print(f"   候補2: {candidate}")
+            
+            if candidate.exists():
+                print(f"   ✅ 検出しました！")
+                return str(candidate)
+            else:
+                print(f"   ❌ 見つかりません")
         
         # 4. システムPATHから探す
+        print(f"\n[検索5] システムPATHから検索...")
+        
         if os.name == 'nt':
             result = os.system(f"where llama-server > nul 2>&1")
             if result == 0:
-                print(f"✅ llama-server をシステムPATHから検出")
+                print(f"   ✅ システムPATHで検出しました")
                 return "llama-server"
+            else:
+                print(f"   ❌ システムPATHで見つかりません")
         else:
             result = os.system(f"which llama-server > /dev/null 2>&1")
             if result == 0:
-                print(f"✅ llama-server をシステムPATHから検出")
+                print(f"   ✅ システムPATHで検出しました")
                 return "llama-server"
+            else:
+                print(f"   ❌ システムPATHで見つかりません")
         
+        print(f"\n{'='*60}")
+        print(f"❌ llama-server バイナリが見つかりませんでした")
+        print(f"{'='*60}\n")
         return None
     
     def _is_port_available(self, host: str, port: int) -> bool:

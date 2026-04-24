@@ -127,33 +127,86 @@ async function waitForPythonBackend() {
   console.log('⏳ Pythonバックエンドの起動を待機中...');
   
   if (mainWindow) {
-    mainWindow.webContents.send('log-message', '[INFO] バックエンドのヘルスチェックを開始します');
+    mainWindow.webContents.send('log-message', '[INFO] バックエンドの状態確認を開始します');
   }
   
-  const maxRetries = 300; // 300秒待つ
+  const maxRetries = 300; // 最大300秒
+  const initializingTimeoutThreshold = 60; // initializing が60秒以上続いたら異常と判定
+  let initializingStartTime = null;
   
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const response = await fetch(`${PYTHON_API_URL}/health`);
+      const response = await fetch(`${PYTHON_API_URL}/status`);
       if (response.ok) {
         const data = await response.json();
-        if (data.model_loaded) {
-          console.log('✅ Pythonバックエンドが起動しました（モデルロード済み）');
+        const status = data.status;
+        
+        console.log(`[Status Check] ${status} - message: ${data.message}`);
+        
+        // ステータスに応じた処理
+        if (status === 'ready') {
+          console.log('✅ Pythonバックエンドが準備完了しました');
           if (mainWindow) {
             mainWindow.webContents.send('log-message', '[SUCCESS] バックエンド起動完了（モデルロード済み）');
           }
           isPythonReady = true;
           return;
-        } else {
-          console.log('⏳ モデルロード中...');
+        } 
+        else if (status === 'downloading' || status === 'loading_model') {
+          // ダウンロード・ロード中：待機継続
           if (mainWindow && i % 5 === 0) { // 5秒ごとに通知
-            mainWindow.webContents.send('log-message', `[INFO] モデルロード中... (試行 ${i + 1}/${maxRetries})`);
+            mainWindow.webContents.send('log-message', `[INFO] ${data.message} (${i}秒経過)`);
+            if (data.detail) {
+              mainWindow.webContents.send('log-message', `[INFO]   詳細: ${data.detail}`);
+            }
+          }
+          // initializing タイマーをリセット
+          initializingStartTime = null;
+        }
+        else if (status === 'error') {
+          // エラー：即座に失敗
+          console.error('❌ バックエンドがエラー状態です');
+          if (mainWindow) {
+            mainWindow.webContents.send('log-message', `[ERROR] バックエンドエラー: ${data.message}`);
+            if (data.detail) {
+              mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
+            }
+          }
+          throw new Error(`Pythonバックエンドエラー: ${data.message}${data.detail ? ' - ' + data.detail : ''}`);
+        }
+        else if (status === 'initializing') {
+          // initializing が一定時間以上続いたら異常扱い
+          if (initializingStartTime === null) {
+            initializingStartTime = i;
+          }
+          
+          const initializingElapsed = i - initializingStartTime;
+          if (initializingElapsed >= initializingTimeoutThreshold) {
+            console.error(`❌ initializing が${initializingTimeoutThreshold}秒以上続いています`);
+            if (mainWindow) {
+              mainWindow.webContents.send('log-message', `[ERROR] バックエンド初期化がハング状態です（${initializingElapsed}秒継続中）`);
+              if (data.detail) {
+                mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
+              }
+            }
+            throw new Error(`Pythonバックエンド初期化がハング状態: ${initializingTimeoutThreshold}秒以上応答なし`);
+          }
+          
+          // 通常のハング時間内：待機継続
+          if (mainWindow && i % 10 === 0) {
+            mainWindow.webContents.send('log-message', `[INFO] バックエンド初期化中... (${i}秒経過)`);
+          }
+        }
+        else {
+          // その他の未知状態
+          if (mainWindow && i % 10 === 0) {
+            mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (ステータス: ${status}, ${i}秒経過)`);
           }
         }
       }
     } catch (e) {
-      // まだ起動していない
-      if (mainWindow && i % 10 === 0) { // 10秒ごとにログ出力
+      // ネットワークエラー：まだサーバーが起動していない
+      if (mainWindow && i % 10 === 0) {
         mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (${i}秒経過)`);
       }
     }

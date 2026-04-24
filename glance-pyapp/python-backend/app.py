@@ -105,10 +105,17 @@ def initialize_system():
     global current_model, config
     
     try:
+        print("\n" + "="*60)
+        print("🔄 バックグラウンド初期化処理を開始...")
+        print("="*60 + "\n")
+        
         # 1. アクティブモデルを config から取得
+        print("📋 [ステップ1] アクティブモデルの確認...")
         active_model_name = config.get('activeModel')
         if not active_model_name or active_model_name not in config.get('models', {}):
             raise ValueError(f"config.yaml に有効な activeModel が設定されていません: {active_model_name}")
+        
+        print(f"   ✅ アクティブモデル: {active_model_name}")
         
         active_model_config = config['models'][active_model_name]
         model_type = active_model_config.get('type')
@@ -116,8 +123,12 @@ def initialize_system():
         if model_type not in ['internvl_gguf', 'qwen_vl_gguf', 'qwen3_vl_server']:
             raise NotImplementedError(f"モデルタイプ '{model_type}' はまだサポートされていません")
         
+        print(f"   ✅ モデルタイプ: {model_type}")
+        
         # 2. 保存先パスの決定とファイル名を config から抽出
+        print("\n📋 [ステップ2] ファイルパスの決定...")
         model_dir = get_writable_model_path()
+        print(f"   モデルディレクトリ: {model_dir}")
         
         # config の相対パスからファイル名を抽出
         model_relative_path = active_model_config.get('path', '')
@@ -128,27 +139,58 @@ def initialize_system():
         model_path = os.path.join(model_dir, model_filename)
         mmproj_path = os.path.join(model_dir, mmproj_filename)
         
+        print(f"   モデルファイル: {model_filename}")
+        print(f"   mmproj ファイル: {mmproj_filename}")
+        
         # 3. ダウンロードURL を config から取得
+        print("\n📋 [ステップ3] ダウンロードURL の確認...")
         model_download_url = active_model_config.get('download_url')
         mmproj_download_url = active_model_config.get('mmproj_download_url')
         
         if not model_download_url or not mmproj_download_url:
             raise ValueError(f"モデル設定に download_url または mmproj_download_url が設定されていません")
         
+        print(f"   ✅ ダウンロードURL が正しく設定されています")
+        
         # 4. モデルの存在確認とダウンロード
+        print("\n📋 [ステップ4] モデルファイルの確認...")
+        
         if not os.path.exists(model_path):
+            print(f"   📥 モデルファイルが見つかりません: {model_path}")
+            print(f"      ダウンロードを開始します...")
             app_state["status"] = "downloading"
             app_state["message"] = "AIモデルをダウンロードしています..."
             app_state["progress"] = 0
-            download_file(model_download_url, model_path, "AIモデル")
+            app_state["detail"] = ""
+            
+            try:
+                download_file(model_download_url, model_path, "AIモデル")
+                print(f"   ✅ モデルファイルのダウンロード完了")
+            except Exception as e:
+                print(f"   ❌ モデルファイルのダウンロードに失敗: {e}")
+                raise
+        else:
+            print(f"   ✅ モデルファイルが存在します: {model_path}")
             
         if not os.path.exists(mmproj_path):
+            print(f"   📥 mmproj ファイルが見つかりません: {mmproj_path}")
+            print(f"      ダウンロードを開始します...")
             app_state["status"] = "downloading"
             app_state["message"] = "画像処理エンジンをダウンロードしています..."
             app_state["progress"] = 0
-            download_file(mmproj_download_url, mmproj_path, "画像処理エンジン")
+            app_state["detail"] = ""
+            
+            try:
+                download_file(mmproj_download_url, mmproj_path, "画像処理エンジン")
+                print(f"   ✅ mmproj ファイルのダウンロード完了")
+            except Exception as e:
+                print(f"   ❌ mmproj ファイルのダウンロードに失敗: {e}")
+                raise
+        else:
+            print(f"   ✅ mmproj ファイルが存在します: {mmproj_path}")
 
         # 5. モデルのロード
+        print("\n📋 [ステップ5] モデルのロード...")
         app_state["status"] = "loading_model"
         app_state["message"] = "AIを起動しています..."
         app_state["progress"] = 100
@@ -156,29 +198,46 @@ def initialize_system():
         
         print(f"\n{'='*60}")
         print(f"📦 モデルをロード中: {active_model_name}")
-        print(f"   パス: {model_path}")
+        print(f"   タイプ: {model_type}")
+        print(f"   モデルパス: {model_path}")
+        print(f"   mmproj パス: {mmproj_path}")
         print(f"{'='*60}\n")
         
         # モデルをロード（タイプ別）
         if model_type == 'internvl_gguf':
+            print("   🚀 InternVLGGUFModel を初期化中...")
             current_model = InternVLGGUFModel(
                 model_path=model_path,
                 mmproj_path=mmproj_path,
                 draft_model_path=None
             )
+            print("   🔄 モデルをロード中...")
+            current_model.load()
+            print("   ✅ InternVLGGUFModel ロード完了")
+            
         elif model_type == 'qwen_vl_gguf':
+            print("   🚀 QwenVLGGUFModel を初期化中...")
             current_model = QwenVLGGUFModel(
                 model_path=model_path,
                 mmproj_path=mmproj_path,
                 draft_model_path=None
             )
+            print("   🔄 モデルをロード中...")
+            current_model.load()
+            print("   ✅ QwenVLGGUFModel ロード完了")
+            
         elif model_type == 'qwen3_vl_server':
+            print("   🚀 Qwen3VLServerModel を初期化中...")
             # Qwen3-VL (llama-server経由)
             server_url = active_model_config.get('server_url', 'http://127.0.0.1:8080')
             server_host = active_model_config.get('server_host', '127.0.0.1')
             server_port = active_model_config.get('server_port', 8080)
             auto_start_server = active_model_config.get('auto_start_server', True)
             bundled_server_binary = active_model_config.get('bundled_server_binary')
+            
+            print(f"      サーバーURL: {server_url}")
+            print(f"      ホスト: {server_host}:{server_port}")
+            print(f"      自動起動: {auto_start_server}")
             
             current_model = Qwen3VLServerModel(
                 model_path=model_path,
@@ -189,23 +248,30 @@ def initialize_system():
                 auto_start_server=auto_start_server,
                 bundled_server_binary=bundled_server_binary
             )
-        
-        current_model.load()
+            print("   🔄 llama-server に接続・起動中...")
+            current_model.load()
+            print("   ✅ Qwen3VLServerModel ロード完了")
         
         app_state["status"] = "ready"
         app_state["message"] = "準備完了"
         app_state["detail"] = ""
         
-        print(f"\n✅ モデルロード完了")
+        print(f"\n{'='*60}")
+        print(f"✅ モデルロード完了")
         print(f"{'='*60}\n")
         
     except Exception as e:
+        print(f"\n{'='*60}")
         print(f"❌ 初期化エラー: {e}")
+        print(f"{'='*60}\n")
         import traceback
         traceback.print_exc()
         app_state["status"] = "error"
         app_state["message"] = "起動エラーが発生しました"
         app_state["detail"] = str(e)
+        print(f"\n⚠️ app_state を error に設定しました")
+        print(f"   message: {app_state['message']}")
+        print(f"   detail: {app_state['detail']}\n")
 
 
 def load_config():
