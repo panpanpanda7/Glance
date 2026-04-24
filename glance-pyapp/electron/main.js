@@ -135,79 +135,86 @@ async function waitForPythonBackend() {
   let initializingStartTime = null;
   
   for (let i = 0; i < maxRetries; i++) {
+    // 【通信部分のみを try/catch で囲む】
+    let data;
     try {
       const response = await fetch(`${PYTHON_API_URL}/status`);
-      if (response.ok) {
-        const data = await response.json();
-        const status = data.status;
-        
-        console.log(`[Status Check] ${status} - message: ${data.message}`);
-        
-        // ステータスに応じた処理
-        if (status === 'ready') {
-          console.log('✅ Pythonバックエンドが準備完了しました');
-          if (mainWindow) {
-            mainWindow.webContents.send('log-message', '[SUCCESS] バックエンド起動完了（モデルロード済み）');
-          }
-          isPythonReady = true;
-          return;
-        } 
-        else if (status === 'downloading' || status === 'loading_model') {
-          // ダウンロード・ロード中：待機継続
-          if (mainWindow && i % 5 === 0) { // 5秒ごとに通知
-            mainWindow.webContents.send('log-message', `[INFO] ${data.message} (${i}秒経過)`);
-            if (data.detail) {
-              mainWindow.webContents.send('log-message', `[INFO]   詳細: ${data.detail}`);
-            }
-          }
-          // initializing タイマーをリセット
-          initializingStartTime = null;
-        }
-        else if (status === 'error') {
-          // エラー：即座に失敗
-          console.error('❌ バックエンドがエラー状態です');
-          if (mainWindow) {
-            mainWindow.webContents.send('log-message', `[ERROR] バックエンドエラー: ${data.message}`);
-            if (data.detail) {
-              mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
-            }
-          }
-          throw new Error(`Pythonバックエンドエラー: ${data.message}${data.detail ? ' - ' + data.detail : ''}`);
-        }
-        else if (status === 'initializing') {
-          // initializing が一定時間以上続いたら異常扱い
-          if (initializingStartTime === null) {
-            initializingStartTime = i;
-          }
-          
-          const initializingElapsed = i - initializingStartTime;
-          if (initializingElapsed >= initializingTimeoutThreshold) {
-            console.error(`❌ initializing が${initializingTimeoutThreshold}秒以上続いています`);
-            if (mainWindow) {
-              mainWindow.webContents.send('log-message', `[ERROR] バックエンド初期化がハング状態です（${initializingElapsed}秒継続中）`);
-              if (data.detail) {
-                mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
-              }
-            }
-            throw new Error(`Pythonバックエンド初期化がハング状態: ${initializingTimeoutThreshold}秒以上応答なし`);
-          }
-          
-          // 通常のハング時間内：待機継続
-          if (mainWindow && i % 10 === 0) {
-            mainWindow.webContents.send('log-message', `[INFO] バックエンド初期化中... (${i}秒経過)`);
-          }
-        }
-        else {
-          // その他の未知状態
-          if (mainWindow && i % 10 === 0) {
-            mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (ステータス: ${status}, ${i}秒経過)`);
-          }
-        }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
+      data = await response.json();
     } catch (e) {
-      // ネットワークエラー：まだサーバーが起動していない
+      // ネットワーク失敗：まだサーバーが起動していないか通信エラー
       if (mainWindow && i % 10 === 0) {
         mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (${i}秒経過)`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      continue;  // ここで continue する
+    }
+    
+    // 【ここからは状態判定。catch の外で行う】
+    const status = data.status;
+    console.log(`[Status Check] ${status} - message: ${data.message}`);
+    
+    // ステータスに応じた処理
+    if (status === 'ready') {
+      console.log('✅ Pythonバックエンドが準備完了しました');
+      if (mainWindow) {
+        mainWindow.webContents.send('log-message', '[SUCCESS] バックエンド起動完了（モデルロード済み）');
+      }
+      isPythonReady = true;
+      return;
+    } 
+    else if (status === 'downloading' || status === 'loading_model') {
+      // ダウンロード・ロード中：待機継続
+      if (mainWindow && i % 5 === 0) { // 5秒ごとに通知
+        mainWindow.webContents.send('log-message', `[INFO] ${data.message} (${i}秒経過)`);
+        if (data.detail) {
+          mainWindow.webContents.send('log-message', `[INFO]   詳細: ${data.detail}`);
+        }
+      }
+      // initializing タイマーをリセット
+      initializingStartTime = null;
+    }
+    else if (status === 'error') {
+      // エラー：即座に失敗（catch で握りつぶされない）
+      console.error('❌ バックエンドがエラー状態です');
+      if (mainWindow) {
+        mainWindow.webContents.send('log-message', `[ERROR] バックエンドエラー: ${data.message}`);
+        if (data.detail) {
+          mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
+        }
+      }
+      throw new Error(`Pythonバックエンドエラー: ${data.message}${data.detail ? ' - ' + data.detail : ''}`);
+    }
+    else if (status === 'initializing') {
+      // initializing が一定時間以上続いたら異常扱い
+      if (initializingStartTime === null) {
+        initializingStartTime = i;
+      }
+      
+      const initializingElapsed = i - initializingStartTime;
+      if (initializingElapsed >= initializingTimeoutThreshold) {
+        // ハング状態：即座に失敗（catch で握りつぶされない）
+        console.error(`❌ initializing が${initializingTimeoutThreshold}秒以上続いています`);
+        if (mainWindow) {
+          mainWindow.webContents.send('log-message', `[ERROR] バックエンド初期化がハング状態です（${initializingElapsed}秒継続中）`);
+          if (data.detail) {
+            mainWindow.webContents.send('log-message', `[ERROR] 詳細: ${data.detail}`);
+          }
+        }
+        throw new Error(`Pythonバックエンド初期化がハング状態: ${initializingTimeoutThreshold}秒以上応答なし`);
+      }
+      
+      // 通常のハング時間内：待機継続
+      if (mainWindow && i % 10 === 0) {
+        mainWindow.webContents.send('log-message', `[INFO] バックエンド初期化中... (${i}秒経過)`);
+      }
+    }
+    else {
+      // その他の未知状態
+      if (mainWindow && i % 10 === 0) {
+        mainWindow.webContents.send('log-message', `[INFO] バックエンド起動処理中... (ステータス: ${status}, ${i}秒経過)`);
       }
     }
     
