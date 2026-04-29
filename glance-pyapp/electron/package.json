@@ -1,6 +1,6 @@
 {
   "name": "glance-pyapp",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Glance - 視覚障害者向けPC画面読み上げアプリ（Python API版）",
   "repository": {
     "type": "git",
@@ -50,10 +50,6 @@
         "from": "resources/glance-backend",
         "to": "glance-backend",
         "filter": ["**/*"]
-      },
-      {
-        "from": "resources/llama-server.exe",
-        "to": "glance-backend/llama-server.exe"
       }
     ],
     "win": {

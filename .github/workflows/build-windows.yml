@@ -35,44 +35,167 @@ jobs:
     - name: Download llama-server binary
       run: |
         # Windows 用 llama.cpp バイナリをダウンロード（最新リリース）
+        Write-Host "========== llama-server.exe ダウンロード開始 =========="
+        
         $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases" -Headers @{"Accept"="application/vnd.github.v3+json"}
         $releases = $response.Content | ConvertFrom-Json
         
         # 最新リリースから Windows バイナリを探す
         $found = $false
+        $assetName = ""
         foreach ($release in $releases) {
           if ($found) { break }
           foreach ($asset in $release.assets) {
             if ($asset.name -match ".*windows.*x86-64.*\.zip$") {
               $downloadUrl = $asset.browser_download_url
-              Write-Host "Downloading: $downloadUrl"
-              Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
+              $assetName = $asset.name
+              Write-Host "✅ Asset 検出: $assetName"
+              Write-Host "📥 ダウンロード開始: $downloadUrl"
+              
+              try {
+                Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
+                Write-Host "✅ ダウンロード完了"
+              } catch {
+                Write-Host "❌ ERROR: ダウンロード失敗"
+                Write-Host $_.Exception.Message
+                exit 1
+              }
+              
               $found = $true
               break
             }
           }
         }
         
-        if ($found) {
-          # ZIP を展開
+        if (-not $found) {
+          Write-Host "❌ ERROR: Windows llama.cpp バイナリが見つかりません"
+          exit 1
+        }
+        
+        # ZIP を展開
+        Write-Host "📂 ZIP を展開中..."
+        try {
           Expand-Archive -Path "llama-cpp-bin.zip" -DestinationPath "llama-cpp-bin"
-          # llama-server.exe を探す
-          $exePath = Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "llama-server.exe" | Select-Object -First 1
-          if ($exePath) {
-            Copy-Item $exePath.FullName -Destination "./glance-pyapp/python-backend/llama-server.exe"
-            Write-Host "Copied llama-server.exe to python-backend"
-          } else {
-            Write-Host "WARNING: llama-server.exe not found in downloaded archive"
+          Write-Host "✅ 展開完了"
+        } catch {
+          Write-Host "❌ ERROR: ZIP 展開失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
+        
+        # llama-server.exe を探す
+        Write-Host "🔍 llama-server.exe を検索中..."
+        $exePath = Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+        
+        if ($exePath) {
+          Write-Host "✅ llama-server.exe 検出: $($exePath.FullName)"
+          Write-Host "📋 コピー元: $($exePath.FullName)"
+          Write-Host "📋 コピー先: ./glance-pyapp/python-backend/llama-server.exe"
+          
+          try {
+            Copy-Item $exePath.FullName -Destination "./glance-pyapp/python-backend/llama-server.exe" -Force
+            Write-Host "✅ glance-pyapp/python-backend/llama-server.exe へのコピー完了"
+            
+            # コピー後の存在確認
+            if (Test-Path "./glance-pyapp/python-backend/llama-server.exe") {
+              Write-Host "✅ コピー後の存在確認: OK"
+            } else {
+              Write-Host "❌ ERROR: コピー後にファイルが見つかりません"
+              exit 1
+            }
+          } catch {
+            Write-Host "❌ ERROR: llama-server.exe のコピー失敗"
+            Write-Host $_.Exception.Message
+            exit 1
           }
         } else {
-          Write-Host "WARNING: Could not find Windows llama.cpp binary"
+          Write-Host "❌ ERROR: llama-server.exe が展開後のアーカイブに見つかりません"
+          exit 1
         }
+        
+        Write-Host "========== llama-server.exe ダウンロード完了 =========="
 
     # 2. Pythonバックエンドのビルド（モデルを含まないので高速）
     - name: Build Python Backend
       working-directory: ./glance-pyapp/python-backend
       run: |
         pyinstaller glance.spec
+
+    # 2.5 llama-server.exe を dist/glance-backend/ にコピー
+    - name: Copy llama-server to PyInstaller dist
+      run: |
+        Write-Host "========== llama-server.exe を dist へコピー =========="
+        
+        # コピー元を確認
+        Write-Host "📋 ステップ1: コピー元の確認"
+        $sourcePath = "./glance-pyapp/python-backend/llama-server.exe"
+        Write-Host "  検索パス: $sourcePath"
+        
+        if (-not (Test-Path $sourcePath)) {
+          Write-Host "❌ ERROR: ソース llama-server.exe が見つかりません"
+          Write-Host "  存在するファイル一覧:"
+          Get-ChildItem "./glance-pyapp/python-backend/" -Filter "llama-server*"
+          exit 1
+        }
+        
+        Write-Host "✅ ソースファイル検出: $sourcePath"
+        $sourceInfo = Get-Item $sourcePath
+        Write-Host "  ファイルサイズ: $($sourceInfo.Length) bytes"
+        
+        # コピー先ディレクトリを確認・作成
+        Write-Host "📋 ステップ2: コピー先ディレクトリの確認"
+        $destDir = "./glance-pyapp/python-backend/dist/glance-backend"
+        Write-Host "  対象ディレクトリ: $destDir"
+        
+        if (-not (Test-Path $destDir)) {
+          Write-Host "❌ ERROR: PyInstaller dist ディレクトリが見つかりません"
+          Write-Host "  dist フォルダ内:"
+          Get-ChildItem "./glance-pyapp/python-backend/dist/" -Recurse | Select-Object -First 20
+          exit 1
+        }
+        
+        Write-Host "✅ dist ディレクトリ確認完了"
+        
+        # glance-backend.exe を探して、その位置を確認
+        Write-Host "  glance-backend.exe の位置:"
+        $glanceExe = Get-ChildItem "$destDir" -Filter "glance-backend.exe" -Recurse | Select-Object -First 1
+        if ($glanceExe) {
+          Write-Host "    ✅ 検出: $($glanceExe.FullName)"
+        } else {
+          Write-Host "    ❌ glance-backend.exe が見つかりません"
+          Write-Host "    dist/glance-backend/ の内容:"
+          Get-ChildItem "$destDir" | Select-Object -First 20
+          exit 1
+        }
+        
+        # llama-server.exe をコピー
+        Write-Host "📋 ステップ3: llama-server.exe をコピー"
+        $destPath = "$destDir\llama-server.exe"
+        Write-Host "  コピー元: $sourcePath"
+        Write-Host "  コピー先: $destPath"
+        
+        try {
+          Copy-Item $sourcePath -Destination $destPath -Force
+          Write-Host "✅ コピー完了"
+        } catch {
+          Write-Host "❌ ERROR: llama-server.exe のコピーに失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
+        
+        # コピー後の存在確認
+        Write-Host "📋 ステップ4: コピー後の存在確認"
+        if (-not (Test-Path $destPath)) {
+          Write-Host "❌ ERROR: コピー後にファイルが見つかりません: $destPath"
+          exit 1
+        }
+        
+        $destInfo = Get-Item $destPath
+        Write-Host "✅ コピー後の確認成功"
+        Write-Host "  パス: $destPath"
+        Write-Host "  ファイルサイズ: $($destInfo.Length) bytes"
+        
+        Write-Host "========== llama-server.exe を dist へコピー完了 =========="
 
     # 3. Node.js環境のセットアップ
     - name: Set up Node.js
@@ -89,13 +212,76 @@ jobs:
     # 4. ビルド済みPythonバックエンドをElectronのリソースにコピー
     - name: Copy Python backend to Electron resources
       run: |
+        Write-Host "========== Electron resources への配置 =========="
+        
         New-Item -ItemType Directory -Force -Path ./glance-pyapp/electron/resources
+        Write-Host "✅ resources ディレクトリ作成完了"
+        
+        Write-Host "📋 dist/glance-backend/ を resources へコピー中..."
         Copy-Item -Recurse -Force ./glance-pyapp/python-backend/dist/glance-backend ./glance-pyapp/electron/resources/
-        # llama-server.exe も同梱
-        if (Test-Path "./glance-pyapp/python-backend/llama-server.exe") {
-          Copy-Item "./glance-pyapp/python-backend/llama-server.exe" -Destination "./glance-pyapp/electron/resources/llama-server.exe"
-          Write-Host "Copied llama-server.exe to Electron resources"
+        Write-Host "✅ コピー完了"
+
+    # 4.5 llama-server.exe の最終配置確認
+    - name: Verify llama-server.exe in final location
+      run: |
+        Write-Host "========== llama-server.exe の最終配置確認 =========="
+        
+        # 確認1: glance-pyapp/python-backend/llama-server.exe
+        Write-Host "📋 確認1: python-backend/llama-server.exe"
+        $check1Path = "./glance-pyapp/python-backend/llama-server.exe"
+        Write-Host "  パス: $check1Path"
+        if (Test-Path $check1Path) {
+          $info = Get-Item $check1Path
+          Write-Host "  ✅ 存在確認: OK"
+          Write-Host "  サイズ: $($info.Length) bytes"
+        } else {
+          Write-Host "  ❌ ERROR: ファイルが見つかりません"
+          exit 1
         }
+        
+        # 確認2: dist/glance-backend/llama-server.exe
+        Write-Host "📋 確認2: dist/glance-backend/llama-server.exe"
+        $check2Path = "./glance-pyapp/python-backend/dist/glance-backend/llama-server.exe"
+        Write-Host "  パス: $check2Path"
+        if (Test-Path $check2Path) {
+          $info = Get-Item $check2Path
+          Write-Host "  ✅ 存在確認: OK"
+          Write-Host "  サイズ: $($info.Length) bytes"
+        } else {
+          Write-Host "  ❌ ERROR: ファイルが見つかりません"
+          exit 1
+        }
+        
+        # 確認3: electron/resources/glance-backend/llama-server.exe
+        Write-Host "📋 確認3: electron/resources/glance-backend/llama-server.exe"
+        $check3Path = "./glance-pyapp/electron/resources/glance-backend/llama-server.exe"
+        Write-Host "  パス: $check3Path"
+        if (Test-Path $check3Path) {
+          $info = Get-Item $check3Path
+          Write-Host "  ✅ 存在確認: OK"
+          Write-Host "  サイズ: $($info.Length) bytes"
+        } else {
+          Write-Host "  ❌ ERROR: ファイルが見つかりません"
+          Write-Host "  electron/resources/glance-backend/ の内容:"
+          Get-ChildItem "./glance-pyapp/electron/resources/glance-backend/" -File | Select-Object Name | Head -20
+          exit 1
+        }
+        
+        # 確認4: glance-backend.exe が同じディレクトリにあるか確認
+        Write-Host "📋 確認4: glance-backend.exe との共存確認"
+        $glanceExePath = "./glance-pyapp/electron/resources/glance-backend/glance-backend.exe"
+        Write-Host "  パス: $glanceExePath"
+        if (Test-Path $glanceExePath) {
+          $info = Get-Item $glanceExePath
+          Write-Host "  ✅ 存在確認: OK"
+          Write-Host "  サイズ: $($info.Length) bytes"
+          Write-Host "  ✅ glance-backend.exe と llama-server.exe が同じディレクトリに存在"
+        } else {
+          Write-Host "  ❌ ERROR: glance-backend.exe が見つかりません"
+          exit 1
+        }
+        
+        Write-Host "========== すべての存在確認が完了 =========="
 
     # 5. アプリのビルドとパッケージング
     - name: Build Electron App
