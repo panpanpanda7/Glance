@@ -37,45 +37,68 @@ jobs:
         # Windows 用 llama.cpp バイナリをダウンロード（最新リリース）
         Write-Host "========== llama-server.exe ダウンロード開始 =========="
         
-        $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases" -Headers @{"Accept"="application/vnd.github.v3+json"}
-        $releases = $response.Content | ConvertFrom-Json
+        # GitHub API で最新リリース情報を取得
+        Write-Host "📥 GitHub API から最新リリース情報を取得中..."
+        try {
+          $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest" -Headers @{"Accept"="application/vnd.github.v3+json"}
+          $latestRelease = $response.Content | ConvertFrom-Json
+          Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
+        } catch {
+          Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
         
-        # 最新リリースから Windows バイナリを探す
-        $found = $false
-        $assetName = ""
-        foreach ($release in $releases) {
-          if ($found) { break }
-          foreach ($asset in $release.assets) {
-            if ($asset.name -match ".*windows.*x86-64.*\.zip$") {
-              $downloadUrl = $asset.browser_download_url
-              $assetName = $asset.name
-              Write-Host "✅ Asset 検出: $assetName"
-              Write-Host "📥 ダウンロード開始: $downloadUrl"
-              
-              try {
-                Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
-                Write-Host "✅ ダウンロード完了"
-              } catch {
-                Write-Host "❌ ERROR: ダウンロード失敗"
-                Write-Host $_.Exception.Message
-                exit 1
-              }
-              
-              $found = $true
-              break
-            }
+        # Assets 一覧をログ出力して確認
+        Write-Host "📋 利用可能な assets:"
+        foreach ($asset in $latestRelease.assets) {
+          Write-Host "  - $($asset.name)"
+        }
+        
+        # Windows x64 バイナリを探す（複数のパターンに対応）
+        Write-Host "🔍 Windows x64 バイナリを検索中..."
+        $windowsAsset = $null
+        
+        # 優先順位: llama-b*-bin-win-x64.zip > llama-b*-bin-win-x86_64.zip > その他
+        foreach ($asset in $latestRelease.assets) {
+          $name = $asset.name
+          # CPU向けの Windows x64 バイナリを探す（CUDA/GPU向けは除外）
+          if ($name -match "bin-win.*x64.*\.zip$" -and $name -notmatch "cuda|opencl|hipblas") {
+            $windowsAsset = $asset
+            Write-Host "✅ Windows バイナリ検出: $name"
+            break
           }
         }
         
-        if (-not $found) {
-          Write-Host "❌ ERROR: Windows llama.cpp バイナリが見つかりません"
+        if (-not $windowsAsset) {
+          Write-Host "❌ ERROR: Windows x64 バイナリが見つかりません"
+          Write-Host "利用可能な assets:"
+          foreach ($asset in $latestRelease.assets) {
+            Write-Host "  - $($asset.name)"
+          }
+          exit 1
+        }
+        
+        # ダウンロード
+        $downloadUrl = $windowsAsset.browser_download_url
+        $assetName = $windowsAsset.name
+        Write-Host "📥 ダウンロード開始..."
+        Write-Host "  URL: $downloadUrl"
+        Write-Host "  Asset: $assetName"
+        
+        try {
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
+          Write-Host "✅ ダウンロード完了"
+        } catch {
+          Write-Host "❌ ERROR: ダウンロード失敗"
+          Write-Host $_.Exception.Message
           exit 1
         }
         
         # ZIP を展開
         Write-Host "📂 ZIP を展開中..."
         try {
-          Expand-Archive -Path "llama-cpp-bin.zip" -DestinationPath "llama-cpp-bin"
+          Expand-Archive -Path "llama-cpp-bin.zip" -DestinationPath "llama-cpp-bin" -Force
           Write-Host "✅ 展開完了"
         } catch {
           Write-Host "❌ ERROR: ZIP 展開失敗"
@@ -88,7 +111,8 @@ jobs:
         $exePath = Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "llama-server.exe" | Select-Object -First 1
         
         if ($exePath) {
-          Write-Host "✅ llama-server.exe 検出: $($exePath.FullName)"
+          Write-Host "✅ llama-server.exe 検出"
+          Write-Host "  検出パス: $($exePath.FullName)"
           Write-Host "📋 コピー元: $($exePath.FullName)"
           Write-Host "📋 コピー先: ./glance-pyapp/python-backend/llama-server.exe"
           
@@ -98,7 +122,8 @@ jobs:
             
             # コピー後の存在確認
             if (Test-Path "./glance-pyapp/python-backend/llama-server.exe") {
-              Write-Host "✅ コピー後の存在確認: OK"
+              $fileInfo = Get-Item "./glance-pyapp/python-backend/llama-server.exe"
+              Write-Host "✅ 存在確認: OK (サイズ: $($fileInfo.Length) bytes)"
             } else {
               Write-Host "❌ ERROR: コピー後にファイルが見つかりません"
               exit 1
@@ -110,6 +135,8 @@ jobs:
           }
         } else {
           Write-Host "❌ ERROR: llama-server.exe が展開後のアーカイブに見つかりません"
+          Write-Host "展開後のディレクトリ構造:"
+          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object FullName | Head -20
           exit 1
         }
         
