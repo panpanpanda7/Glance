@@ -113,23 +113,66 @@ jobs:
         if ($exePath) {
           Write-Host "✅ llama-server.exe 検出"
           Write-Host "  検出パス: $($exePath.FullName)"
-          Write-Host "📋 コピー元: $($exePath.FullName)"
-          Write-Host "📋 コピー先: ./glance-pyapp/python-backend/llama-server.exe"
+          
+          # exe の親ディレクトリを特定
+          $sourceDir = $exePath.Directory.FullName
+          Write-Host "📋 ソースディレクトリ: $sourceDir"
+          
+          # ソースディレクトリ内の DLL とその他必要ファイルを確認
+          Write-Host "📋 ソースディレクトリ内のファイル一覧:"
+          $dllFiles = Get-ChildItem -Path $sourceDir -Filter "*.dll" | Select-Object Name
+          $exeFiles = Get-ChildItem -Path $sourceDir -Filter "*.exe" | Select-Object Name
+          $otherFiles = Get-ChildItem -Path $sourceDir -Filter "*.txt" | Select-Object Name
+          
+          Write-Host "  DLL ファイル:"
+          if ($dllFiles.Count -gt 0) {
+            foreach ($dll in $dllFiles) {
+              Write-Host "    - $($dll.Name)"
+            }
+          } else {
+            Write-Host "    (DLL なし)"
+          }
+          
+          Write-Host "  EXE ファイル:"
+          foreach ($exe in $exeFiles) {
+            Write-Host "    - $($exe.Name)"
+          }
+          
+          # ソースディレクトリを丸ごと python-backend にコピー
+          $destDir = "./glance-pyapp/python-backend/llama-cpp-bin"
+          Write-Host "📋 コピー先: $destDir"
+          Write-Host "📋 ソースディレクトリの内容を丸ごとコピー中..."
           
           try {
-            Copy-Item $exePath.FullName -Destination "./glance-pyapp/python-backend/llama-server.exe" -Force
-            Write-Host "✅ glance-pyapp/python-backend/llama-server.exe へのコピー完了"
+            # 既存ディレクトリがあれば削除
+            if (Test-Path $destDir) {
+              Remove-Item -Path $destDir -Recurse -Force
+            }
             
-            # コピー後の存在確認
-            if (Test-Path "./glance-pyapp/python-backend/llama-server.exe") {
-              $fileInfo = Get-Item "./glance-pyapp/python-backend/llama-server.exe"
-              Write-Host "✅ 存在確認: OK (サイズ: $($fileInfo.Length) bytes)"
-            } else {
-              Write-Host "❌ ERROR: コピー後にファイルが見つかりません"
+            # ソースディレクトリ自体をコピー（subdirectory 構造も保持）
+            Copy-Item -Path $sourceDir -Destination $destDir -Recurse -Force
+            Write-Host "✅ ソースディレクトリのコピー完了"
+            
+            # コピー後の確認
+            Write-Host "📋 コピー後のファイル確認:"
+            $copiedFiles = Get-ChildItem -Path $destDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+            Write-Host "  合計ファイル数: $($copiedFiles.Count)"
+            
+            $copiedDlls = Get-ChildItem -Path $destDir -Filter "*.dll" -Recurse
+            Write-Host "  DLL ファイル数: $($copiedDlls.Count)"
+            if ($copiedDlls.Count -eq 0) {
+              Write-Host "  ⚠️ WARNING: DLL が見つかりません。実行時にエラーが発生する可能性があります"
+            }
+            
+            $copiedExes = Get-ChildItem -Path $destDir -Filter "llama-server.exe" -Recurse
+            if ($copiedExes.Count -eq 0) {
+              Write-Host "  ❌ ERROR: llama-server.exe のコピーに失敗しました"
               exit 1
             }
+            Write-Host "  ✅ llama-server.exe のコピー確認"
+            
           } catch {
-            Write-Host "❌ ERROR: llama-server.exe のコピー失敗"
+            Write-Host "❌ ERROR: ソースディレクトリのコピー失敗"
             Write-Host $_.Exception.Message
             exit 1
           }
@@ -148,81 +191,108 @@ jobs:
       run: |
         pyinstaller glance.spec
 
-    # 2.5 llama-server.exe を dist/glance-backend/ にコピー
-    - name: Copy llama-server to PyInstaller dist
+    # 2.5 llama-cpp-bin (exe + DLL) を dist/glance-backend/ にコピー
+    - name: Copy llama-cpp-bin to PyInstaller dist
       run: |
-        Write-Host "========== llama-server.exe を dist へコピー =========="
+        Write-Host "========== llama-cpp-bin (exe + DLL) を dist へコピー =========="
         
-        # コピー元を確認
+        # コピー元ディレクトリを確認
         Write-Host "📋 ステップ1: コピー元の確認"
-        $sourcePath = "./glance-pyapp/python-backend/llama-server.exe"
-        Write-Host "  検索パス: $sourcePath"
+        $sourceDir = "./glance-pyapp/python-backend/llama-cpp-bin"
+        Write-Host "  ソースディレクトリ: $sourceDir"
         
-        if (-not (Test-Path $sourcePath)) {
-          Write-Host "❌ ERROR: ソース llama-server.exe が見つかりません"
-          Write-Host "  存在するファイル一覧:"
-          Get-ChildItem "./glance-pyapp/python-backend/" -Filter "llama-server*"
+        if (-not (Test-Path $sourceDir)) {
+          Write-Host "❌ ERROR: llama-cpp-bin ディレクトリが見つかりません"
+          Write-Host "  python-backend フォルダ内の内容:"
+          Get-ChildItem "./glance-pyapp/python-backend/" -Directory
           exit 1
         }
         
-        Write-Host "✅ ソースファイル検出: $sourcePath"
-        $sourceInfo = Get-Item $sourcePath
-        Write-Host "  ファイルサイズ: $($sourceInfo.Length) bytes"
+        Write-Host "✅ ソースディレクトリ確認: $sourceDir"
         
-        # コピー先ディレクトリを確認・作成
+        # ソースディレクトリ内のファイル一覧を確認
+        Write-Host "📋 ソースディレクトリ内のファイル一覧:"
+        $sourceFiles = Get-ChildItem -Path $sourceDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+        $sourceDlls = Get-ChildItem -Path $sourceDir -Filter "*.dll" -Recurse
+        $sourceExes = Get-ChildItem -Path $sourceDir -Filter "llama-server.exe" -Recurse
+        
+        Write-Host "  合計ファイル数: $($sourceFiles.Count)"
+        Write-Host "  DLL ファイル数: $($sourceDlls.Count)"
+        
+        if ($sourceDlls.Count -eq 0) {
+          Write-Host "  ⚠️ WARNING: DLL が見つかりません"
+        }
+        
+        Write-Host "  DLL 一覧:"
+        foreach ($dll in $sourceDlls) {
+          Write-Host "    - $($dll.Name)"
+        }
+        
+        if ($sourceExes.Count -eq 0) {
+          Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+          exit 1
+        }
+        
+        # コピー先ディレクトリを確認
         Write-Host "📋 ステップ2: コピー先ディレクトリの確認"
         $destDir = "./glance-pyapp/python-backend/dist/glance-backend"
         Write-Host "  対象ディレクトリ: $destDir"
         
         if (-not (Test-Path $destDir)) {
           Write-Host "❌ ERROR: PyInstaller dist ディレクトリが見つかりません"
-          Write-Host "  dist フォルダ内:"
-          Get-ChildItem "./glance-pyapp/python-backend/dist/" -Recurse | Select-Object -First 20
           exit 1
         }
         
         Write-Host "✅ dist ディレクトリ確認完了"
         
-        # glance-backend.exe を探して、その位置を確認
-        Write-Host "  glance-backend.exe の位置:"
-        $glanceExe = Get-ChildItem "$destDir" -Filter "glance-backend.exe" -Recurse | Select-Object -First 1
-        if ($glanceExe) {
-          Write-Host "    ✅ 検出: $($glanceExe.FullName)"
-        } else {
-          Write-Host "    ❌ glance-backend.exe が見つかりません"
-          Write-Host "    dist/glance-backend/ の内容:"
-          Get-ChildItem "$destDir" | Select-Object -First 20
-          exit 1
-        }
-        
-        # llama-server.exe をコピー
-        Write-Host "📋 ステップ3: llama-server.exe をコピー"
-        $destPath = "$destDir\llama-server.exe"
-        Write-Host "  コピー元: $sourcePath"
-        Write-Host "  コピー先: $destPath"
+        # llama-cpp-bin をコピー
+        Write-Host "📋 ステップ3: llama-cpp-bin を dist へコピー"
+        $destLlamaBinDir = "$destDir\llama-cpp-bin"
+        Write-Host "  コピー元: $sourceDir"
+        Write-Host "  コピー先: $destLlamaBinDir"
         
         try {
-          Copy-Item $sourcePath -Destination $destPath -Force
+          # 既存ディレクトリがあれば削除
+          if (Test-Path $destLlamaBinDir) {
+            Remove-Item -Path $destLlamaBinDir -Recurse -Force
+            Write-Host "  既存ディレクトリを削除しました"
+          }
+          
+          # コピー
+          Copy-Item -Path $sourceDir -Destination $destLlamaBinDir -Recurse -Force
           Write-Host "✅ コピー完了"
         } catch {
-          Write-Host "❌ ERROR: llama-server.exe のコピーに失敗"
+          Write-Host "❌ ERROR: llama-cpp-bin のコピーに失敗"
           Write-Host $_.Exception.Message
           exit 1
         }
         
-        # コピー後の存在確認
-        Write-Host "📋 ステップ4: コピー後の存在確認"
-        if (-not (Test-Path $destPath)) {
-          Write-Host "❌ ERROR: コピー後にファイルが見つかりません: $destPath"
-          exit 1
+        # コピー後の確認
+        Write-Host "📋 ステップ4: コピー後の確認"
+        $destFiles = Get-ChildItem -Path $destLlamaBinDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+        $destDlls = Get-ChildItem -Path $destLlamaBinDir -Filter "*.dll" -Recurse
+        $destExes = Get-ChildItem -Path $destLlamaBinDir -Filter "llama-server.exe" -Recurse
+        
+        Write-Host "  合計ファイル数: $($destFiles.Count)"
+        Write-Host "  DLL ファイル数: $($destDlls.Count)"
+        
+        if ($destDlls.Count -eq 0) {
+          Write-Host "  ⚠️ WARNING: DLL がコピーされていません。実行時エラーが発生する可能性があります"
+        } else {
+          Write-Host "  ✅ DLL がコピーされています"
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $destDlls) {
+            Write-Host "    - $($dll.Name)"
+          }
         }
         
-        $destInfo = Get-Item $destPath
-        Write-Host "✅ コピー後の確認成功"
-        Write-Host "  パス: $destPath"
-        Write-Host "  ファイルサイズ: $($destInfo.Length) bytes"
+        if ($destExes.Count -eq 0) {
+          Write-Host "  ❌ ERROR: llama-server.exe がコピーされていません"
+          exit 1
+        }
+        Write-Host "  ✅ llama-server.exe がコピーされています"
         
-        Write-Host "========== llama-server.exe を dist へコピー完了 =========="
+        Write-Host "========== llama-cpp-bin を dist へコピー完了 =========="
 
     # 3. Node.js環境のセットアップ
     - name: Set up Node.js
@@ -248,67 +318,124 @@ jobs:
         Copy-Item -Recurse -Force ./glance-pyapp/python-backend/dist/glance-backend ./glance-pyapp/electron/resources/
         Write-Host "✅ コピー完了"
 
-    # 4.5 llama-server.exe の最終配置確認
-    - name: Verify llama-server.exe in final location
+    # 4.5 llama-server.exe + DLL の最終配置確認
+    - name: Verify llama-server.exe and DLLs in final location
       run: |
-        Write-Host "========== llama-server.exe の最終配置確認 =========="
+        Write-Host "========== llama-server.exe と DLL の最終配置確認 =========="
         
-        # 確認1: glance-pyapp/python-backend/llama-server.exe
-        Write-Host "📋 確認1: python-backend/llama-server.exe"
-        $check1Path = "./glance-pyapp/python-backend/llama-server.exe"
+        # 確認1: glance-pyapp/python-backend/llama-cpp-bin/
+        Write-Host "📋 確認1: python-backend/llama-cpp-bin/"
+        $check1Path = "./glance-pyapp/python-backend/llama-cpp-bin"
         Write-Host "  パス: $check1Path"
         if (Test-Path $check1Path) {
-          $info = Get-Item $check1Path
-          Write-Host "  ✅ 存在確認: OK"
-          Write-Host "  サイズ: $($info.Length) bytes"
+          $files = Get-ChildItem -Path $check1Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check1Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check1Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ⚠️ WARNING: DLL が見つかりません"
+          } else {
+            Write-Host "  ✅ DLL が含まれています"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
         } else {
-          Write-Host "  ❌ ERROR: ファイルが見つかりません"
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
           exit 1
         }
         
-        # 確認2: dist/glance-backend/llama-server.exe
-        Write-Host "📋 確認2: dist/glance-backend/llama-server.exe"
-        $check2Path = "./glance-pyapp/python-backend/dist/glance-backend/llama-server.exe"
+        # 確認2: dist/glance-backend/llama-cpp-bin/
+        Write-Host "📋 確認2: dist/glance-backend/llama-cpp-bin/"
+        $check2Path = "./glance-pyapp/python-backend/dist/glance-backend/llama-cpp-bin"
         Write-Host "  パス: $check2Path"
         if (Test-Path $check2Path) {
-          $info = Get-Item $check2Path
-          Write-Host "  ✅ 存在確認: OK"
-          Write-Host "  サイズ: $($info.Length) bytes"
+          $files = Get-ChildItem -Path $check2Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check2Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check2Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ❌ ERROR: DLL が見つかりません（実行時エラーの原因になります）"
+            exit 1
+          }
+          
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $dlls) {
+            Write-Host "    - $($dll.Name)"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
         } else {
-          Write-Host "  ❌ ERROR: ファイルが見つかりません"
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
           exit 1
         }
         
-        # 確認3: electron/resources/glance-backend/llama-server.exe
-        Write-Host "📋 確認3: electron/resources/glance-backend/llama-server.exe"
-        $check3Path = "./glance-pyapp/electron/resources/glance-backend/llama-server.exe"
+        # 確認3: electron/resources/glance-backend/llama-cpp-bin/
+        Write-Host "📋 確認3: electron/resources/glance-backend/llama-cpp-bin/"
+        $check3Path = "./glance-pyapp/electron/resources/glance-backend/llama-cpp-bin"
         Write-Host "  パス: $check3Path"
         if (Test-Path $check3Path) {
-          $info = Get-Item $check3Path
-          Write-Host "  ✅ 存在確認: OK"
-          Write-Host "  サイズ: $($info.Length) bytes"
+          $files = Get-ChildItem -Path $check3Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check3Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check3Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ❌ ERROR: DLL が見つかりません（リリースには同梱されません）"
+            exit 1
+          }
+          
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $dlls) {
+            Write-Host "    - $($dll.Name)"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
         } else {
-          Write-Host "  ❌ ERROR: ファイルが見つかりません"
-          Write-Host "  electron/resources/glance-backend/ の内容:"
-          Get-ChildItem "./glance-pyapp/electron/resources/glance-backend/" -File | Select-Object Name | Head -20
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
           exit 1
         }
         
-        # 確認4: glance-backend.exe が同じディレクトリにあるか確認
+        # 確認4: glance-backend.exe との共存確認
         Write-Host "📋 確認4: glance-backend.exe との共存確認"
         $glanceExePath = "./glance-pyapp/electron/resources/glance-backend/glance-backend.exe"
         Write-Host "  パス: $glanceExePath"
         if (Test-Path $glanceExePath) {
           $info = Get-Item $glanceExePath
-          Write-Host "  ✅ 存在確認: OK"
+          Write-Host "  ✅ glance-backend.exe 存在確認: OK"
           Write-Host "  サイズ: $($info.Length) bytes"
-          Write-Host "  ✅ glance-backend.exe と llama-server.exe が同じディレクトリに存在"
+          Write-Host "  ✅ glance-backend.exe と llama-cpp-bin が同じディレクトリに存在"
         } else {
           Write-Host "  ❌ ERROR: glance-backend.exe が見つかりません"
           exit 1
         }
         
-        Write-Host "========== すべての存在確認が完了 =========="
+        Write-Host "========== 最終配置確認が完了（DLL も含まれています）=========="
 
     # 5. アプリのビルドとパッケージング
     - name: Build Electron App

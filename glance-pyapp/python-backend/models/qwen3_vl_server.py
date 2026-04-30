@@ -310,8 +310,30 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 # プロセスが既に終了している
                 error_msg = f"❌ llama-server が起動直後に終了しました (return code: {return_code})"
                 print(error_msg)
-                print(f"   ログを確認してください: {log_file_path}")
-                return False, f"起動直後クラッシュ: return_code={return_code}, log={log_file_path}"
+                
+                # Windows の DLL 不足エラーコード：0xC0000135 = 3221225781
+                if return_code == 3221225781 or return_code == -1073741515:
+                    dll_error_msg = (
+                        f"\n🔴 DLL 不足の可能性が高いです\n"
+                        f"   このエラーコード ({return_code}) は Windows では「DLL が見つからない」を示します\n"
+                        f"\n📋 確認してください：\n"
+                        f"   1. llama-server.exe のパス: {server_binary}\n"
+                        f"   2. 親ディレクトリに *.dll ファイルが存在するか確認\n"
+                        f"   3. 実行に必要な DLL：\n"
+                        f"      - msvcrt.dll, kernel32.dll など Windows 標準 DLL\n"
+                        f"      - CUDA/GPU 関連 DLL（使用している場合）\n"
+                        f"\n📄 詳細はログを確認：\n"
+                        f"   {log_file_path}\n"
+                        f"\n🔧 対処法：\n"
+                        f"   - Windows release にて llama-server.exe とその DLL が同梱されているか確認\n"
+                        f"   - 配置パス: resources/glance-backend/llama-cpp-bin/\n"
+                    )
+                    print(dll_error_msg)
+                    return False, f"DLL 不足エラー: return_code={return_code}, binary={server_binary}, log={log_file_path}"
+                else:
+                    print(f"   ログを確認してください: {log_file_path}")
+                    print(f"   実行ファイル: {server_binary}")
+                    return False, f"起動直後クラッシュ: return_code={return_code}, binary={server_binary}, log={log_file_path}"
             
             self.started_server_by_self = True  # 自前起動フラグを設定
             self._server_log_path = log_file_path  # ログパスを保存
