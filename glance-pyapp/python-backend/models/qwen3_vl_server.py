@@ -31,7 +31,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
         server_port: int = 8080,
         auto_start_server: bool = True,
         bundled_server_binary: str = None,
-        server_binary_path: str = None
+        server_binary_path: str = None,
+        ctx_size: int = 8192
     ):
         """
         初期化
@@ -45,6 +46,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
             auto_start_server: サーバーを自動起動するか（デフォルト: True）
             bundled_server_binary: 同梱サーバーバイナリの相対パス（例: llama-server.exe）
             server_binary_path: llama-server のバイナリパス（明示的に指定）
+            ctx_size: コンテキストサイズ（デフォルト: 8192、8GB RAM環境向け）
         """
         super().__init__(model_path)
         self.mmproj_path = mmproj_path
@@ -54,6 +56,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.auto_start_server = auto_start_server
         self.bundled_server_binary = bundled_server_binary
         self.server_binary_path = server_binary_path
+        self.ctx_size = ctx_size
         self.health_checked = False
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
@@ -296,7 +299,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "-m", self.model_path,
                 "--mmproj", self.mmproj_path,
                 "--host", self.server_host,
-                "--port", str(self.server_port)
+                "--port", str(self.server_port),
+                "--ctx-size", str(self.ctx_size)
             ]
             
             # Windows の場合は CREATE_NEW_PROCESS_GROUP を使う

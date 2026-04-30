@@ -234,10 +234,12 @@ def initialize_system():
             server_port = active_model_config.get('server_port', 8080)
             auto_start_server = active_model_config.get('auto_start_server', True)
             bundled_server_binary = active_model_config.get('bundled_server_binary')
+            ctx_size = active_model_config.get('ctx_size', 8192)
             
             print(f"      サーバーURL: {server_url}")
             print(f"      ホスト: {server_host}:{server_port}")
             print(f"      自動起動: {auto_start_server}")
+            print(f"      コンテキストサイズ: {ctx_size}")
             
             current_model = Qwen3VLServerModel(
                 model_path=model_path,
@@ -246,7 +248,8 @@ def initialize_system():
                 server_host=server_host,
                 server_port=server_port,
                 auto_start_server=auto_start_server,
-                bundled_server_binary=bundled_server_binary
+                bundled_server_binary=bundled_server_binary,
+                ctx_size=ctx_size
             )
             print("   🔄 llama-server に接続・起動中...")
             current_model.load()
