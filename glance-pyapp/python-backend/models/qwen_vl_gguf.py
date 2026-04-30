@@ -14,7 +14,7 @@ from .model_interface import VisionLanguageModel
 
 
 class QwenVLGGUFModel(VisionLanguageModel):
-    """Qwen2.5-VL GGUF (llama.cpp) 量子化モデル"""
+    """Qwenx-VL GGUF (llama.cpp) 量子化モデル"""
     
     def __init__(self, model_path: str, mmproj_path: str = None, draft_model_path: str = None):
         """
@@ -42,7 +42,7 @@ class QwenVLGGUFModel(VisionLanguageModel):
             print("⚠️ モデルは既にロードされています")
             return
         
-        print(f"📦 Qwen2.5-VL GGUFをロード中: {self.model_path}")
+        print(f"📦 Qwen-VL GGUFをロード中: {self.model_path}")
         print(f"   ビジョンプロジェクタ: {self.mmproj_path}")
         print(f"   CPUスレッド数: {self.physical_cores}")
         
@@ -61,10 +61,10 @@ class QwenVLGGUFModel(VisionLanguageModel):
             if not self.mmproj_path or not os.path.exists(self.mmproj_path):
                 raise FileNotFoundError(f"ビジョンプロジェクタが見つかりません: {self.mmproj_path}")
             
-            # Chat Handlerの作成（Qwen2.5-VL用）
-            print(f"📦 Qwen25VLChatHandler を初期化中...")
+            # Chat Handlerの作成（Qwen-VL用）
+            print(f"📦 QwenVLChatHandler を初期化中...")
             chat_handler = Qwen25VLChatHandler(clip_model_path=self.mmproj_path)
-            print(f"✅ Qwen25VLChatHandler初期化完了")
+            print(f"✅ QwenVLChatHandler初期化完了")
             
             # メインモデルのロード
             model_kwargs = {
@@ -83,7 +83,7 @@ class QwenVLGGUFModel(VisionLanguageModel):
             self.llm = Llama(**model_kwargs)
             
             self.is_loaded = True
-            print(f"✅ Qwen2.5-VL GGUFのロードが完了しました")
+            print(f"✅ Qwen-VL GGUFのロードが完了しました")
             print(f"   🖥️ Metal GPU: 有効")
             
         except ImportError as e:
