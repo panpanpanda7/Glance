@@ -296,8 +296,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "-m", self.model_path,
                 "--mmproj", self.mmproj_path,
                 "--host", self.server_host,
-                "--port", str(self.server_port),
-                "--log-level", "warn"  # ログレベルを調整
+                "--port", str(self.server_port)
             ]
             
             # Windows の場合は CREATE_NEW_PROCESS_GROUP を使う
