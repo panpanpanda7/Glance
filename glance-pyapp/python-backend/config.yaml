@@ -62,7 +62,7 @@ models:
     server_host: 127.0.0.1
     server_port: 8080
     auto_start_server: true
-    bundled_server_binary: llama-server.exe
+    bundled_server_binary: llama-cpp-bin/llama-server.exe
 
   # ===== GGUF量子化モデル（後方互換）=====
   internvl-3_5-4b-gguf:

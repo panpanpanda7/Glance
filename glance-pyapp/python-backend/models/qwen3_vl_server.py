@@ -67,9 +67,9 @@ class Qwen3VLServerModel(VisionLanguageModel):
         
         優先順位:
         1. server_binary_path で明示的に指定
-        2. frozen 実行時【最優先】: sys.executable と同じディレクトリ
-        3. frozen 実行時: カレントディレクトリ
-        4. frozen 実行時: Electronリソース
+        2. exe_dir / bundled_server_binary（config.yaml設定値）
+        3. exe_dir / "llama-cpp-bin" / "llama-server.exe"（ハードコード フォールバック）
+        4. Path.cwd() / bundled_server_binary
         5. 開発時: プロジェクトルート相対パス
         6. システムPATH
         """
@@ -78,7 +78,11 @@ class Qwen3VLServerModel(VisionLanguageModel):
         print(f"🔍 llama-server バイナリを検索中...")
         print(f"{'='*60}")
         
+        # 設定値を表示
+        print(f"\n[設定] bundled_server_binary: {self.bundled_server_binary}")
+        
         searched_paths = []  # 検索したパスを記録
+        adopted_path = None  # 最終的に採用したパス
         
         # 1. 明示的に指定されている場合
         if self.server_binary_path:
@@ -100,9 +104,9 @@ class Qwen3VLServerModel(VisionLanguageModel):
             print(f"   → 本番環境モード（PyInstallerでビルドされている）")
             print(f"   sys.executable: {__import__('sys').executable}")
             
-            # 【最優先】sys.executable と同じディレクトリ
+            # 【優先度1】sys.executable と同じディレクトリ + bundled_server_binary 設定値
             # （glance-backend.exe と同じフォルダ）
-            print(f"\n[検索2] sys.executable と同じディレクトリ【最優先】...")
+            print(f"\n[検索2] exe_dir / bundled_server_binary【優先度1】...")
             exe_dir = Path(__import__('sys').executable).parent
             
             if self.bundled_server_binary:
@@ -114,13 +118,25 @@ class Qwen3VLServerModel(VisionLanguageModel):
             searched_paths.append(str(candidate))
             
             if candidate.exists():
-                print(f"   ✅ 検出しました！【最優先候補で採用】")
+                print(f"   ✅ 検出しました！【採用】")
                 return str(candidate)
             else:
                 print(f"   ❌ 見つかりません")
             
+            # 【優先度2】ハードコード フォールバック: llama-cpp-bin サブディレクトリ
+            print(f"\n[検索3] exe_dir / llama-cpp-bin / llama-server.exe【優先度2】...")
+            fallback_candidate = exe_dir / "llama-cpp-bin" / ("llama-server.exe" if os.name == 'nt' else "llama-server")
+            print(f"   候補: {fallback_candidate}")
+            searched_paths.append(str(fallback_candidate))
+            
+            if fallback_candidate.exists():
+                print(f"   ✅ 検出しました！【採用】")
+                return str(fallback_candidate)
+            else:
+                print(f"   ❌ 見つかりません")
+            
             # カレントディレクトリ
-            print(f"\n[検索3] カレントディレクトリ...")
+            print(f"\n[検索4] カレントディレクトリ...")
             cwd_candidate = Path.cwd() / (self.bundled_server_binary or ("llama-server.exe" if os.name == 'nt' else "llama-server"))
             print(f"   候補: {cwd_candidate}")
             searched_paths.append(str(cwd_candidate))
@@ -132,7 +148,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 print(f"   ❌ 見つかりません")
             
             # Electron パッケージの場合（別フォルダ）
-            print(f"\n[検索4] Electronリソース（resources/glance-backend）...")
+            print(f"\n[検索5] Electronリソース（resources/glance-backend）...")
             base_path = Path(getattr(__import__('sys'), '_MEIPASS', ''))
             electron_candidate = base_path.parent / "glance-backend" / "llama-server.exe"
             print(f"   候補: {electron_candidate}")
