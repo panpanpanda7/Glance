@@ -69,6 +69,9 @@ async function startPythonBackend() {
   // 環境変数を設定（既存の環境変数を継承しつつ、PYTHONIOENCODINGを追加）
   const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
   
+  // 親プロセスのPIDを引数として渡す（孤児プロセス防止）
+  args.push(`--parent-pid=${process.pid}`);
+
   pythonProcess = spawn(executablePath, args, {
     stdio: 'pipe', // 'inherit'から'pipe'に変更して出力をキャプチャ
     cwd: cwd,
@@ -862,6 +865,96 @@ app.whenReady().then(async () => {
 });
 
 /**
+ * Pythonバックエンドを段階的に終了する
+ * 1. /shutdown API でグレースフルシャットダウン（llama-server含む）
+ * 2. 5秒待機 → まだ生きていれば SIGTERM
+ * 3. 3秒待機 → まだ生きていれば SIGKILL
+ */
+async function killPythonBackend() {
+  if (!pythonProcess) return;
+
+  const proc = pythonProcess;
+  pythonProcess = null; // 重複実行防止
+
+  console.log('🐍 Pythonバックエンドの終了処理を開始...');
+
+  // ステップ1: /shutdown API でグレースフルシャットダウン
+  try {
+    console.log('   📨 /shutdown API を呼び出し中...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    await fetch(`${PYTHON_API_URL}/shutdown`, {
+      method: 'POST',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    console.log('   ✅ /shutdown API 呼び出し成功');
+  } catch (e) {
+    console.log(`   ⚠️ /shutdown API 呼び出し失敗（続行します）: ${e.message}`);
+  }
+
+  // プロセスが終了するまで最大5秒待機
+  const isAlive = () => {
+    try {
+      process.kill(proc.pid, 0); // シグナル0 = 死活確認のみ
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  for (let i = 0; i < 50; i++) {
+    if (!isAlive()) {
+      console.log('   ✅ Pythonプロセスが正常終了しました');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  // ステップ2: SIGTERM
+  console.log('   ⚠️ まだ生きています → SIGTERM を送信');
+  try {
+    proc.kill('SIGTERM');
+  } catch (e) {
+    console.log(`   ⚠️ SIGTERM 送信失敗: ${e.message}`);
+  }
+
+  for (let i = 0; i < 30; i++) {
+    if (!isAlive()) {
+      console.log('   ✅ Pythonプロセスが SIGTERM で終了しました');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  // ステップ3: SIGKILL（強制終了）
+  console.log('   ⚠️ まだ生きています → SIGKILL で強制終了');
+  try {
+    proc.kill('SIGKILL');
+  } catch (e) {
+    console.log(`   ⚠️ SIGKILL 送信失敗: ${e.message}`);
+  }
+
+  console.log('   ✅ Pythonプロセスを強制終了しました');
+}
+
+// 終了処理が重複実行されないようにガード
+let isCleaningUp = false;
+
+/**
+ * アプリ終了時の共通クリーンアップ処理
+ */
+async function performCleanup() {
+  if (isCleaningUp) return;
+  isCleaningUp = true;
+
+  console.log('🛑 Glanceを終了中...');
+  globalShortcut.unregisterAll();
+  await killPythonBackend();
+  console.log('✅ Glanceを終了しました');
+}
+
+/**
  * すべてのウィンドウが閉じられたときの処理
  */
 app.on('window-all-closed', () => {
@@ -871,21 +964,45 @@ app.on('window-all-closed', () => {
 });
 
 /**
- * アプリケーション終了時の処理
+ * アプリケーション終了前の処理（before-quit → will-quit の順に発火）
  */
-app.on('will-quit', async () => {
-  console.log('🛑 Glanceを終了中...');
+app.on('before-quit', (event) => {
+  if (isCleaningUp) return;
+  // 非同期クリーンアップのため一度キャンセルして再実行
+  event.preventDefault();
+  performCleanup().then(() => {
+    app.exit(0);
+  });
+});
 
-  globalShortcut.unregisterAll();
-
-  // Pythonプロセスを終了
-  if (pythonProcess) {
-    console.log('🐍 Pythonプロセスを終了中...');
-    pythonProcess.kill();
+/**
+ * アプリケーション終了時の処理（フォールバック）
+ */
+app.on('will-quit', () => {
+  // before-quit でクリーンアップ済みの場合はここは通常通過するだけ
+  // クリーンアップがまだなら同期的に最低限の処理を行う
+  if (!isCleaningUp && pythonProcess) {
+    console.log('⚠️ will-quit: フォールバックとして Pythonプロセスを強制終了');
+    try {
+      pythonProcess.kill('SIGKILL');
+    } catch (e) {
+      // 無視
+    }
     pythonProcess = null;
   }
+});
 
-  console.log('✅ Glanceを終了しました');
+/**
+ * プロセス自体が終了する直前（同期的な最終手段）
+ */
+process.on('exit', () => {
+  if (pythonProcess) {
+    try {
+      pythonProcess.kill('SIGKILL');
+    } catch (e) {
+      // 無視
+    }
+  }
 });
 
 /**

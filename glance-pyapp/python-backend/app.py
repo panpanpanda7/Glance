@@ -13,6 +13,8 @@ import os
 import sys
 import time
 import threading
+import signal
+import atexit
 import requests
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
@@ -773,6 +775,80 @@ def analyze_stream():
 
 
 # =====================================
+# シャットダウン・クリーンアップ処理
+# =====================================
+
+def cleanup():
+    """モデルとサブプロセスのクリーンアップ"""
+    global current_model
+    print("\n🛑 クリーンアップ処理を開始...")
+    if current_model is not None:
+        try:
+            print("🗑️  モデルをアンロード中（llama-server 停止含む）...")
+            current_model.unload()
+            current_model = None
+            print("✅ モデルのアンロード完了")
+        except Exception as e:
+            print(f"⚠️  モデルアンロード中にエラー: {e}")
+    print("✅ クリーンアップ完了")
+
+
+def shutdown_server():
+    """Flaskサーバーを安全に停止する"""
+    # werkzeug の内部シャットダウン関数を使用
+    func = request.environ.get('werkzeug.server.shutdown')
+    if func is not None:
+        func()
+    else:
+        # werkzeug 開発サーバー以外の場合は os.kill を使用
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+@app.route('/shutdown', methods=['POST'])
+def shutdown():
+    """
+    Electronからのシャットダウン要求を受け付ける
+    モデルをアンロードしてサーバーを停止する
+    """
+    print("\n📨 シャットダウン要求を受信しました")
+    # バックグラウンドでクリーンアップしてから終了
+    def do_shutdown():
+        time.sleep(0.5)  # レスポンスを返してから終了
+        cleanup()
+        os.kill(os.getpid(), signal.SIGTERM)
+    
+    threading.Thread(target=do_shutdown, daemon=True).start()
+    return jsonify({'success': True, 'message': 'シャットダウンを開始します'})
+
+
+def handle_signal(signum, frame):
+    """SIGTERMやSIGINTを受け取った際のハンドラ"""
+    print(f"\n⚡ シグナル {signum} を受信しました")
+    cleanup()
+    sys.exit(0)
+
+
+def monitor_parent_process(parent_pid: int):
+    """
+    親プロセス（Electron）の死活を監視するスレッド
+    親が死んだら自分も終了する（孤児プロセス防止）
+    """
+    import psutil
+    print(f"👁️  親プロセス監視を開始: PID={parent_pid}")
+    
+    while True:
+        try:
+            if not psutil.pid_exists(parent_pid):
+                print(f"\n⚠️  親プロセス（PID={parent_pid}）が終了しました。自動終了します...")
+                cleanup()
+                os.kill(os.getpid(), signal.SIGTERM)
+                break
+        except Exception:
+            pass
+        time.sleep(3)  # 3秒ごとに確認
+
+
+# =====================================
 # アプリケーション起動
 # =====================================
 
@@ -788,6 +864,36 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"❌ 設定ファイルの読み込みに失敗: {e}")
         sys.exit(1)
+    
+    # シグナルハンドラを登録（SIGTERMでクリーンアップ）
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+    
+    # atexit ハンドラでクリーンアップを保証
+    atexit.register(cleanup)
+    
+    # 親プロセスPIDを引数から取得（Electronから渡される）
+    parent_pid = None
+    for arg in sys.argv[1:]:
+        if arg.startswith('--parent-pid='):
+            try:
+                parent_pid = int(arg.split('=')[1])
+                print(f"✅ 親プロセスPID: {parent_pid}")
+            except ValueError:
+                print(f"⚠️  無効な親プロセスPID: {arg}")
+    
+    # 親プロセス監視スレッドを起動
+    if parent_pid is not None:
+        try:
+            import psutil
+            monitor_thread = threading.Thread(
+                target=monitor_parent_process,
+                args=(parent_pid,),
+                daemon=True
+            )
+            monitor_thread.start()
+        except ImportError:
+            print("⚠️  psutil がインストールされていないため、親プロセス監視をスキップします")
     
     # ★バックグラウンドスレッドで初期化を開始
     print("🔄 バックグラウンドで初期化処理を開始...")
