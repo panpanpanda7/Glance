@@ -841,7 +841,8 @@ def monitor_parent_process(parent_pid: int):
             if not psutil.pid_exists(parent_pid):
                 print(f"\n⚠️  親プロセス（PID={parent_pid}）が終了しました。自動終了します...")
                 cleanup()
-                os.kill(os.getpid(), signal.SIGTERM)
+                # os.kill + signal.SIGTERM はFlaskが上書きするため os._exit() で強制終了
+                os._exit(0)
                 break
         except Exception:
             pass
