@@ -47,7 +47,7 @@ window.electronAPI.onAnalysisResult((data) => {
   
   // モデル情報も表示
   if (data.model) {
-    let modelText = `\n\n---\nモデル: ${data.model.name} (${data.model.device})`;
+    let modelText = `\n\n---`;
     // 詳細分析結果かどうかを表示
     if (data.isDetailed) {
       modelText += ' [詳細モード]';
