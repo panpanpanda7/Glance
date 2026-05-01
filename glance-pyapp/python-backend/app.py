@@ -67,11 +67,24 @@ def get_writable_model_path():
     return base_dir
 
 
+def get_llama_server_path():
+    """llama-server保存先パスを取得"""
+    if sys.platform == 'win32':
+        base_dir = os.path.join(os.environ.get('APPDATA', ''), 'Glance', 'llama-server')
+    elif sys.platform == 'darwin':
+        base_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Glance', 'llama-server')
+    else:
+        base_dir = os.path.join(os.path.expanduser('~'), '.local', 'share', 'Glance', 'llama-server')
+    
+    os.makedirs(base_dir, exist_ok=True)
+    return base_dir
+
+
 def download_file(url, dest_path, file_description="ファイル"):
     """進捗状況を更新しながらファイルをダウンロード"""
     try:
         print(f"📥 {file_description}をダウンロード中: {url}")
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()
         total_size = int(response.headers.get('content-length', 0))
         downloaded_size = 0
@@ -98,6 +111,120 @@ def download_file(url, dest_path, file_description="ファイル"):
     except Exception as e:
         print(f"❌ ダウンロードエラー: {e}")
         raise e
+
+
+def get_llama_server_version(llama_server_exe: str) -> Optional[str]:
+    """llama-serverのバージョンを取得"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            [llama_server_exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        # 出力から "build NNNNN" の部分を抽出
+        output = result.stdout + result.stderr
+        if "build" in output:
+            # "build b8992" のような形式から "b8992" を抽出
+            import re
+            match = re.search(r'build\s+(b\d+)', output)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        print(f"   ⚠️ バージョン取得失敗: {e}")
+    return None
+
+
+def compare_versions(current: Optional[str], target: str = "b8992") -> bool:
+    """
+    バージョン比較
+    Returns: True if current < target (更新が必要), False if current >= target (更新不要)
+    """
+    if current is None:
+        return True  # バージョン情報がないなら更新
+    
+    try:
+        # "b8992" 形式から数字を抽出
+        current_num = int(current[1:]) if current.startswith('b') else 0
+        target_num = int(target[1:]) if target.startswith('b') else 0
+        return current_num < target_num
+    except:
+        return True  # 比較失敗時は更新
+
+
+def download_llama_server():
+    """llama-serverの最新バージョンを自動ダウンロード（既存版より新い場合は更新）"""
+    import zipfile
+    import shutil
+    
+    llama_server_dir = get_llama_server_path()
+    llama_server_exe = os.path.join(llama_server_dir, 'llama-server.exe' if sys.platform == 'win32' else 'llama-server')
+    
+    # 最新バージョン
+    TARGET_VERSION = "b8992"
+    
+    # 既に存在する場合はバージョンチェック
+    if os.path.exists(llama_server_exe):
+        current_version = get_llama_server_version(llama_server_exe)
+        print(f"   📌 現在のバージョン: {current_version or '不明'}")
+        print(f"   📌 最新バージョン: {TARGET_VERSION}")
+        
+        if not compare_versions(current_version, TARGET_VERSION):
+            print(f"   ✅ llama-server は最新版です: {llama_server_exe}")
+            return llama_server_exe
+        else:
+            print(f"   🔄 llama-server を更新します...")
+            # 古いバージョンをバックアップ
+            backup_dir = os.path.join(llama_server_dir, 'backup')
+            os.makedirs(backup_dir, exist_ok=True)
+            try:
+                # Windows では .exe ファイルを移動
+                if os.path.exists(llama_server_exe):
+                    backup_exe = os.path.join(backup_dir, f'llama-server-{current_version or "old"}.exe')
+                    shutil.move(llama_server_exe, backup_exe)
+                    print(f"   💾 旧版をバックアップ: {backup_exe}")
+            except Exception as e:
+                print(f"   ⚠️ バックアップ作成に失敗（続行）: {e}")
+    
+    print(f"   📥 llama-server をダウンロード中...")
+    
+    try:
+        # GitHub Releases から最新バージョンをダウンロード
+        if sys.platform == 'win32':
+            download_url = f"https://github.com/ggerganov/llama.cpp/releases/download/{TARGET_VERSION}/llamafile-0.1-server-windows-x64.zip"
+            zip_path = os.path.join(llama_server_dir, 'llamafile-server.zip')
+        elif sys.platform == 'darwin':
+            download_url = f"https://github.com/ggerganov/llama.cpp/releases/download/{TARGET_VERSION}/llamafile-0.1-server-macos-arm64.zip"
+            zip_path = os.path.join(llama_server_dir, 'llamafile-server.zip')
+        else:
+            download_url = f"https://github.com/ggerganov/llama.cpp/releases/download/{TARGET_VERSION}/llamafile-0.1-server-linux-x64.zip"
+            zip_path = os.path.join(llama_server_dir, 'llamafile-server.zip')
+        
+        app_state["status"] = "downloading"
+        app_state["message"] = "llama-server をダウンロードしています..."
+        app_state["progress"] = 0
+        
+        download_file(download_url, zip_path, "llama-server")
+        
+        # ZIP を解凍
+        print(f"   📦 llama-server を解凍中...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(llama_server_dir)
+        
+        # ZIP ファイルを削除
+        os.remove(zip_path)
+        
+        # 実行権限を設定（Linux/Mac）
+        if sys.platform != 'win32':
+            os.chmod(llama_server_exe, 0o755)
+        
+        print(f"   ✅ llama-server のセットアップ完了: {llama_server_exe}")
+        return llama_server_exe
+        
+    except Exception as e:
+        print(f"   ❌ llama-server のダウンロードに失敗: {e}")
+        raise
 
 
 def initialize_system():

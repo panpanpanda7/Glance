@@ -69,12 +69,13 @@ class Qwen3VLServerModel(VisionLanguageModel):
         llama-server バイナリを探す（複数の場所を検索）
         
         優先順位:
-        1. server_binary_path で明示的に指定
-        2. exe_dir / bundled_server_binary（config.yaml設定値）
-        3. exe_dir / "llama-cpp-bin" / "llama-server.exe"（ハードコード フォールバック）
-        4. Path.cwd() / bundled_server_binary
-        5. 開発時: プロジェクトルート相対パス
-        6. システムPATH
+        1. AppData/Roaming/Glance/llama-server/ （自動ダウンロード済み）【★最優先】
+        2. server_binary_path で明示的に指定
+        3. exe_dir / bundled_server_binary（config.yaml設定値）
+        4. exe_dir / "llama-cpp-bin" / "llama-server.exe"（ハードコード フォールバック）
+        5. Path.cwd() / bundled_server_binary
+        6. 開発時: プロジェクトルート相対パス
+        7. システムPATH
         """
         
         print(f"\n{'='*60}")
@@ -86,6 +87,27 @@ class Qwen3VLServerModel(VisionLanguageModel):
         
         searched_paths = []  # 検索したパスを記録
         adopted_path = None  # 最終的に採用したパス
+        
+        # 0. 【最優先】自動ダウンロードされたllama-serverを探す
+        print(f"\n[検索0] 自動ダウンロード済みllama-server【優先度0★最優先】...")
+        if os.name == 'nt':
+            auto_download_dir = os.path.join(os.environ.get('APPDATA', ''), 'Glance', 'llama-server')
+            auto_download_binary = os.path.join(auto_download_dir, 'llama-server.exe')
+        else:
+            if os.name == 'posix' and sys.platform == 'darwin':
+                auto_download_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Glance', 'llama-server')
+            else:
+                auto_download_dir = os.path.join(os.path.expanduser('~'), '.local', 'share', 'Glance', 'llama-server')
+            auto_download_binary = os.path.join(auto_download_dir, 'llama-server')
+        
+        print(f"   候補: {auto_download_binary}")
+        searched_paths.append(str(auto_download_binary))
+        
+        if os.path.exists(auto_download_binary):
+            print(f"   ✅ 検出しました！【採用】")
+            return auto_download_binary
+        else:
+            print(f"   ❌ 見つかりません")
         
         # 1. 明示的に指定されている場合
         if self.server_binary_path:
