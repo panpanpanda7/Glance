@@ -14,6 +14,9 @@ import sys
 import time
 import threading
 import requests
+import subprocess
+import re
+from typing import Optional
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
 from models.qwen_vl_gguf import QwenVLGGUFModel

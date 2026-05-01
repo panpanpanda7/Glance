@@ -5,6 +5,7 @@ Windows 配布対応版（llama-server 自動起動機能付き）
 """
 
 import os
+import sys
 import io
 import base64
 import json
