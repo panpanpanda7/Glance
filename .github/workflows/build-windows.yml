@@ -10,7 +10,28 @@ permissions:
   contents: write
 
 jobs:
+  # 【新】コード品質チェック（早期終了で無駄を削減）
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python for syntax check
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Python Syntax Check
+      working-directory: ./glance-pyapp/python-backend
+      run: |
+        echo "🔍 Python構文チェックを実行中..."
+        python -m py_compile app.py
+        python -m py_compile models/*.py
+        echo "✅ 構文チェック完了"
+
   build:
+    needs: check
     runs-on: windows-latest
 
     steps:
@@ -23,6 +44,18 @@ jobs:
       with:
         python-version: '3.12'
         cache: 'pip'
+        cache-dependency-path: './glance-pyapp/python-backend/requirements.txt'
+
+    # 【新】pip キャッシュの最適化
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~\AppData\Local\pip\Cache
+          ${{ runner.temp }}\pip-cache
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
 
     - name: Install Python dependencies
       working-directory: ./glance-pyapp/python-backend
@@ -185,11 +218,44 @@ jobs:
         
         Write-Host "========== llama-server.exe ダウンロード完了 =========="
 
-    # 2. Pythonバックエンドのビルド（モデルを含まないので高速）
+    # 2. Pythonバックエンドのビルド（PyInstaller最適化）
     - name: Build Python Backend
       working-directory: ./glance-pyapp/python-backend
       run: |
-        pyinstaller glance.spec
+        Write-Host "========== PyInstaller ビルド開始 =========="
+        Write-Host "🔧 最適化オプション:"
+        Write-Host "  - マルチプロセッシング: 有効（-j 4）"
+        Write-Host "  - キャッシュ: 有効（build/）"
+        Write-Host "  - UPX圧縮: 有効（if available）"
+        Write-Host ""
+        
+        # PyInstaller を実行（マルチプロセッシング + キャッシュ有効）
+        $startTime = Get-Date
+        pyinstaller glance.spec -j 4 --distpath dist --buildpath build --specpath .
+        $endTime = Get-Date
+        $duration = ($endTime - $startTime).TotalSeconds
+        
+        Write-Host "========== PyInstaller ビルド完了 =========="
+        Write-Host "⏱️ ビルド時間: $([Math]::Round($duration, 2)) 秒"
+        
+        # ビルド結果確認
+        Write-Host "📋 生成ファイルの確認:"
+        if (Test-Path "dist/glance-backend/glance-backend.exe") {
+          $exeSize = (Get-Item "dist/glance-backend/glance-backend.exe").Length / 1MB
+          Write-Host "  ✅ glance-backend.exe 生成完了（サイズ: $([Math]::Round($exeSize, 2)) MB）"
+        } else {
+          Write-Host "  ❌ ERROR: glance-backend.exe が生成されていません"
+          exit 1
+        }
+
+    # 2.1 PyInstaller キャッシュの保存（次回ビルド高速化）
+    - name: Cache PyInstaller build
+      uses: actions/cache@v3
+      with:
+        path: glance-pyapp/python-backend/build/
+        key: ${{ runner.os }}-pyinstaller-${{ hashFiles('**/requirements.txt', '**/glance.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-pyinstaller-
 
     # 2.5 llama-cpp-bin (exe + DLL) を dist/glance-backend/ にコピー
     - name: Copy llama-cpp-bin to PyInstaller dist
