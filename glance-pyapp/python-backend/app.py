@@ -832,21 +832,44 @@ def monitor_parent_process(parent_pid: int):
     """
     親プロセス（Electron）の死活を監視するスレッド
     親が死んだら自分も終了する（孤児プロセス防止）
-    """
-    import psutil
-    print(f"👁️  親プロセス監視を開始: PID={parent_pid}")
     
+    macOS/Linux: os.getppid() が変わると親が死んだとみなす
+                 （孤児プロセスは launchd/init に引き取られるため ppid が 1 になる）
+    Windows:     psutil.pid_exists() で PID の存在をチェック
+    """
+    original_ppid = os.getppid()
+    print(f"👁️  親プロセス監視を開始: parent_pid={parent_pid}, os.getppid()={original_ppid}")
+
     while True:
         try:
-            if not psutil.pid_exists(parent_pid):
-                print(f"\n⚠️  親プロセス（PID={parent_pid}）が終了しました。自動終了します...")
+            parent_dead = False
+
+            if sys.platform != 'win32':
+                # macOS/Linux: ppid が変わったら親が死んで孤児になった
+                current_ppid = os.getppid()
+                if current_ppid != original_ppid:
+                    print(f"\n⚠️  親プロセスが変わりました: {original_ppid} → {current_ppid}（孤児検出）")
+                    parent_dead = True
+            else:
+                # Windows: psutil で PID の存在を確認
+                try:
+                    import psutil
+                    if not psutil.pid_exists(parent_pid):
+                        print(f"\n⚠️  親プロセス（PID={parent_pid}）が見つかりません")
+                        parent_dead = True
+                except ImportError:
+                    print("⚠️  psutil が利用できません（Windows での親プロセス監視をスキップ）")
+
+            if parent_dead:
+                print(f"🛑 孤児プロセス検出 → クリーンアップして終了します")
                 cleanup()
-                # os.kill + signal.SIGTERM はFlaskが上書きするため os._exit() で強制終了
+                # Flask/werkzeug のシグナルハンドラ競合を避けるため os._exit() で即終了
                 os._exit(0)
-                break
-        except Exception:
-            pass
-        time.sleep(3)  # 3秒ごとに確認
+
+        except Exception as e:
+            print(f"⚠️  親プロセス監視中にエラー: {e}")
+
+        time.sleep(2)  # 2秒ごとに確認
 
 
 # =====================================
@@ -884,17 +907,15 @@ if __name__ == '__main__':
                 print(f"⚠️  無効な親プロセスPID: {arg}")
     
     # 親プロセス監視スレッドを起動
+    # macOS/Linux は os.getppid() を使用するため psutil 不要
+    # Windows のみ psutil を使用（monitor_parent_process 内で処理）
     if parent_pid is not None:
-        try:
-            import psutil
-            monitor_thread = threading.Thread(
-                target=monitor_parent_process,
-                args=(parent_pid,),
-                daemon=True
-            )
-            monitor_thread.start()
-        except ImportError:
-            print("⚠️  psutil がインストールされていないため、親プロセス監視をスキップします")
+        monitor_thread = threading.Thread(
+            target=monitor_parent_process,
+            args=(parent_pid,),
+            daemon=True
+        )
+        monitor_thread.start()
     
     # ★バックグラウンドスレッドで初期化を開始
     print("🔄 バックグラウンドで初期化処理を開始...")
