@@ -300,7 +300,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "--mmproj", self.mmproj_path,
                 "--host", self.server_host,
                 "--port", str(self.server_port),
-                "--ctx-size", str(self.ctx_size)
+                "--ctx-size", str(self.ctx_size),
+                # メモリ最適化パラメータ（8GB RAM環境向け）
+                "--n-batch", "512",        # バッチサイズ削減（デフォルト 2048 → 512）
+                "--ubatch", "128",         # マイクロバッチサイズ削減（デフォルト 512 → 128）
+                "--slots", "1",            # 並行スロット削減（デフォルト 4 → 1）
+                "--no-mmap"                # メモリマッピング無効化（安定性向上）
             ]
             
             # Windows の場合は CREATE_NEW_PROCESS_GROUP を使う
