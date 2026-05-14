@@ -42,8 +42,12 @@ async function startPythonBackend() {
   let executablePath, args, cwd;
   
   if (isDev) {
-    // 開発環境：venv内のPythonを使用
-    executablePath = path.join(__dirname, '..', 'python-backend', 'venv', 'bin', 'python3');
+    // 開発環境：venv内のPythonを使用（Windows/macOS共通）
+    const isWin = process.platform === 'win32';
+    const pythonBin = isWin
+      ? path.join(__dirname, '..', 'python-backend', 'venv', 'Scripts', 'python.exe')
+      : path.join(__dirname, '..', 'python-backend', 'venv', 'bin', 'python3');
+    executablePath = pythonBin;
     const scriptPath = path.join(__dirname, '..', 'python-backend', 'app.py');
     args = [scriptPath];
     cwd = path.dirname(scriptPath);
