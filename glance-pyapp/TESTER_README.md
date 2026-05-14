@@ -1,0 +1,128 @@
+# Glance テスター向け セットアップガイド（Windows）
+
+視覚障害者向けPC画面読み上げアプリ **Glance** のテスト環境を構築する手順です。
+
+---
+
+## 必要なもの
+
+| ツール | バージョン | ダウンロード先 |
+|--------|-----------|----------------|
+| Git | 最新版 | https://git-scm.com/download/win |
+| Python | 3.11 以上 | https://www.python.org/downloads/ |
+| Node.js | LTS 版（20 以上） | https://nodejs.org/ |
+
+> **Python インストール時の注意**  
+> インストーラーの最初の画面で **「Add Python to PATH」にチェック** を入れてください。
+
+---
+
+## 推奨スペック
+
+| 項目 | 最低 | 推奨 |
+|------|------|------|
+| RAM | 8 GB | 16 GB |
+| ストレージ空き容量 | 10 GB | 20 GB（モデル複数使用時） |
+| OS | Windows 10 64-bit | Windows 11 |
+
+---
+
+## 初回セットアップ（1回だけ）
+
+### 1. リポジトリをクローン
+
+```cmd
+git clone https://github.com/panpanpanda7/Glance.git
+cd Glance
+```
+
+### 2. セットアップスクリプトを実行
+
+エクスプローラーで `Glance\glance-pyapp\` フォルダを開き、  
+**`setup-first-time.bat` をダブルクリック**してください。
+
+スクリプトが自動的に以下を行います：
+
+1. Git / Python / Node.js のインストール確認
+2. Python 仮想環境の作成
+3. Python 依存関係のインストール（PyTorch 等、数分かかります）
+4. Node.js 依存関係のインストール
+5. AI モデルファイルの自動ダウンロード（数 GB、時間がかかります）
+
+完了後、アプリを起動するか確認されます。
+
+---
+
+## 2回目以降の起動方法
+
+**`update-and-run.bat` をダブルクリック**するだけです。
+
+以下を自動で行います：
+
+```
+git pull → 依存関係の差分更新（変更があれば） → Glance 起動
+```
+
+> 依存関係に変更がなければインストールはスキップされるため、  
+> 通常は数秒で起動まで進みます。
+
+---
+
+## 初回起動時の注意
+
+- アプリ起動後、**AIモデルのロードに 30 秒〜数分かかります**。  
+  起動音が鳴るまでしばらくお待ちください。
+- システムトレイ（画面右下の通知領域）にアイコンが表示されます。
+- コマンドプロンプトのウィンドウは起動後に閉じても構いません。
+
+---
+
+## ショートカットキー
+
+| キー | 動作 |
+|------|------|
+| `Alt + Shift + G` | 画面キャプチャ → 要約説明 |
+| `Alt + Shift + D` | 画面キャプチャ → 詳細説明 |
+| `Alt + Shift + Q` | 質問入力モード |
+| `Alt + Shift + S` | 読み上げ停止 |
+
+---
+
+## トラブルシューティング
+
+### `Python が見つかりません` と表示される
+→ Python を再インストールし、**「Add Python to PATH」** にチェックを入れてください。
+
+### モデルのダウンロードが失敗する
+→ `python-backend\config.yaml` を開き、`activeModel` のモデルの `download_url` を確認して、  
+　手動でダウンロードし `python-backend\models\gguf\` に配置してください。
+
+### アプリ起動後に何も反応しない
+→ コマンドプロンプトのエラーメッセージを開発者に共有してください。
+
+### `npm start` でエラーが出る
+→ `glance-pyapp\electron\` フォルダで手動実行して確認してください：
+```cmd
+npm install
+npm start -- --dev
+```
+
+---
+
+## フォルダ構成（参考）
+
+```
+Glance\
+└── glance-pyapp\
+    ├── setup-first-time.bat   ← 初回セットアップ（1回だけ実行）
+    ├── update-and-run.bat     ← 毎回の起動はこちら
+    ├── TESTER_README.md       ← このファイル
+    ├── python-backend\
+    │   ├── app.py             （バックエンドサーバー）
+    │   ├── config.yaml        （モデル設定）
+    │   ├── requirements.txt   （Python 依存関係）
+    │   └── models\gguf\       ← モデルファイルをここに配置
+    └── electron\
+        ├── main.js            （Electron メインプロセス）
+        └── package.json       （Node.js 依存関係）
+```
