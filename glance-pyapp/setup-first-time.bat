@@ -2,6 +2,16 @@
 setlocal enabledelayedexpansion
 chcp 65001 > nul
 
+:: ============================================================
+:: 管理者権限チェック・自動昇格
+:: ============================================================
+net session > nul 2>&1
+if %errorlevel% neq 0 (
+    echo 管理者権限が必要です。管理者として再起動します...
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+
 echo ============================================================
 echo  Glance - Windows 初回セットアップ
 echo ============================================================
@@ -9,6 +19,27 @@ echo.
 echo このスクリプトは初回のみ実行してください。
 echo 2回目以降の起動は update-and-run.bat を使用してください。
 echo.
+
+:: ============================================================
+:: Windows Long Path サポートを有効化
+:: ============================================================
+echo [0/5] Windows Long Path サポートの確認...
+
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled 2>nul | findstr "0x1" > nul
+if %errorlevel% equ 0 (
+    echo   [OK] Long Path は既に有効です。
+) else (
+    echo   Long Path を有効化します...
+    reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled /t REG_DWORD /d 1 /f > nul
+    if %errorlevel% equ 0 (
+        echo   [OK] Long Path を有効化しました。
+    ) else (
+        echo   [ERROR] Long Path の有効化に失敗しました。
+        pause & exit /b 1
+    )
+)
+echo.
+
 pause
 
 :: ============================================================
