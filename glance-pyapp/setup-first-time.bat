@@ -138,7 +138,24 @@ if exist requirements.txt (
     certutil -hashfile requirements.txt MD5 2>nul | findstr /v ":" > venv\.req_hash 2>nul
 )
 
-:: 依存関係インストール
+:: llama-cpp-python をビルド済み CPU Wheel で先行インストール（C++コンパイラ不要）
+echo   llama-cpp-python をインストール中（ビルド済みWheel使用）...
+pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
+if %errorlevel% neq 0 (
+    echo   [WARNING] ビルド済みWheelの取得に失敗しました。ソースビルドを試みます。
+    echo             Visual Studio Build Tools がインストールされていない場合は失敗します。
+    pip install llama-cpp-python
+    if %errorlevel% neq 0 (
+        echo.
+        echo [ERROR] llama-cpp-python のインストールに失敗しました。
+        echo         開発者に連絡してください。
+        pause & exit /b 1
+    )
+)
+echo   [OK] llama-cpp-python のインストール完了
+
+:: 残りの依存関係インストール（llama-cpp-python は上でインストール済みなのでスキップされる）
+echo.
 echo   Python 依存関係をインストール中...
 echo   （PyTorch 等のダウンロードに数分かかります）
 echo.
@@ -151,18 +168,6 @@ if %errorlevel% neq 0 (
 )
 echo.
 echo   [OK] Python 依存関係のインストール完了
-
-:: llama-cpp-python を CPU 向けに再ビルド
-echo.
-echo   llama-cpp-python を CPU 向けに再ビルド中...
-echo   （数分かかる場合があります）
-pip uninstall -y llama-cpp-python > nul 2>&1
-pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
-if %errorlevel% neq 0 (
-    echo   [WARNING] ソースビルドに失敗しました。バイナリ版にフォールバックします。
-    pip install llama-cpp-python
-)
-echo   [OK] llama-cpp-python の準備完了
 
 call venv\Scripts\deactivate.bat 2>nul
 cd /d "%~dp0"
