@@ -62,12 +62,30 @@ git --version
 where python > nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python が見つかりません。
-    echo         https://www.python.org/downloads/ から Python 3.11 以上をインストールしてください。
+    echo         https://www.python.org/downloads/release/python-3128/
+    echo         から Python 3.12 をインストールしてください。
     echo         インストール時に "Add Python to PATH" にチェックを入れてください。
     pause & exit /b 1
 )
 echo   [OK] Python:
 python --version
+
+:: Python バージョンチェック（3.13以上は非対応）
+for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set PY_VER=%%v
+for /f "tokens=1,2 delims=." %%a in ("%PY_VER%") do (
+    set PY_MAJOR=%%a
+    set PY_MINOR=%%b
+)
+if %PY_MAJOR% equ 3 if %PY_MINOR% geq 13 (
+    echo.
+    echo [ERROR] Python %PY_VER% は非対応です。
+    echo         Python 3.12 を使用してください。
+    echo         ダウンロード: https://www.python.org/downloads/release/python-3128/
+    echo.
+    echo         Python 3.13 をアンインストール後、Python 3.12 をインストールしてから
+    echo         再度このスクリプトを実行してください。
+    pause & exit /b 1
+)
 
 :: Node.js
 where node > nul 2>&1
@@ -118,8 +136,8 @@ echo.
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo.
-    echo [ERROR] Python 依存関係のインストールに失敗しました。
-    echo         エラー内容を確認してください。
+    echo [ERROR] Python install failed.
+    echo         Please check the error above and contact the developer.
     pause & exit /b 1
 )
 echo.
