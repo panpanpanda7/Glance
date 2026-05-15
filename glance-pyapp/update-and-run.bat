@@ -138,7 +138,7 @@ echo   このウィンドウは起動後に閉じても構いません。
 echo.
 
 cd /d "%~dp0electron"
-call npm start -- --dev
+call npm run dev
 
 if %errorlevel% neq 0 (
     echo.
