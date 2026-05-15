@@ -107,9 +107,18 @@ echo.
 
 cd /d "%~dp0python-backend"
 
+:: venv が存在しても python.exe が動かない場合は作り直す
 if exist venv (
-    echo   既存の仮想環境が見つかりました。スキップします。
-) else (
+    venv\Scripts\python.exe --version > nul 2>&1
+    if !errorlevel! neq 0 (
+        echo   既存の仮想環境が壊れています。作り直します...
+        rmdir /s /q venv
+    ) else (
+        echo   既存の仮想環境が見つかりました。スキップします。
+    )
+)
+
+if not exist venv (
     echo   仮想環境を作成中...
     python -m venv venv
     if %errorlevel% neq 0 (
