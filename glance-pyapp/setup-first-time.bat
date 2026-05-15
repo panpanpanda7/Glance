@@ -197,10 +197,54 @@ echo   [OK] Node.js 依存関係のインストール完了
 cd /d "%~dp0"
 
 :: ============================================================
-:: 4. モデルのダウンロード案内
+:: 4. llama-server.exe のダウンロード
 :: ============================================================
 echo.
-echo [4/5] AI モデルのダウンロード...
+echo [4/6] llama-server.exe のダウンロード...
+echo.
+
+set LLAMA_BIN_DIR=%~dp0python-backend\llama-cpp-bin
+if not exist "%LLAMA_BIN_DIR%" mkdir "%LLAMA_BIN_DIR%"
+
+if exist "%LLAMA_BIN_DIR%\llama-server.exe" (
+    echo   [OK] llama-server.exe は既に存在します。スキップします。
+) else (
+    echo   llama.cpp の最新 Windows バイナリをダウンロード中...
+    echo   （数百MBあります。しばらくお待ちください）
+    echo.
+
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "$ErrorActionPreference = 'Stop';" ^
+        "try {" ^
+        "  Write-Host '  GitHub API から最新リリース情報を取得中...';" ^
+        "  $rel = (Invoke-WebRequest -Uri 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest' -UseBasicParsing).Content | ConvertFrom-Json;" ^
+        "  Write-Host \"  リリース: $($rel.tag_name)\";" ^
+        "  $asset = $rel.assets | Where-Object { $_.name -match 'bin-win.*x64.*\.zip$' -and $_.name -notmatch 'cuda|opencl|hipblas' } | Select-Object -First 1;" ^
+        "  if (-not $asset) { throw 'Windows x64 バイナリが見つかりませんでした' };" ^
+        "  Write-Host \"  ダウンロード: $($asset.name)\";" ^
+        "  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%TEMP%\llama-cpp-bin.zip' -UseBasicParsing;" ^
+        "  Write-Host '  展開中...';" ^
+        "  Expand-Archive -Path '%TEMP%\llama-cpp-bin.zip' -DestinationPath '%TEMP%\llama-cpp-extracted' -Force;" ^
+        "  $exe = Get-ChildItem -Path '%TEMP%\llama-cpp-extracted' -Recurse -Filter 'llama-server.exe' | Select-Object -First 1;" ^
+        "  if (-not $exe) { throw 'ZIPの中にllama-server.exeが見つかりませんでした' };" ^
+        "  Copy-Item -Path $exe.Directory.FullName\* -Destination '%LLAMA_BIN_DIR%' -Force;" ^
+        "  Write-Host '  [OK] llama-server.exe の配置完了';" ^
+        "} catch { Write-Host \"[ERROR] $_\"; exit 1 }"
+
+    if %errorlevel% neq 0 (
+        echo.
+        echo [ERROR] llama-server.exe のダウンロードに失敗しました。
+        echo         手動でダウンロードして配置してください:
+        echo         1. https://github.com/ggerganov/llama.cpp/releases から
+        echo            llama-b*-bin-win-*-x64.zip をダウンロード
+        echo         2. ZIP を展開し、llama-server.exe と DLL を
+        echo            glance-pyapp\python-backend\llama-cpp-bin\ にコピー
+        pause & exit /b 1
+    )
+)
+echo.
+echo.
+echo [5/6] AI モデルのダウンロード...
 echo.
 echo   モデルは glance-pyapp\python-backend\models\gguf\ に配置します。
 echo.
@@ -269,11 +313,11 @@ call venv\Scripts\deactivate.bat 2>nul
 cd /d "%~dp0"
 
 :: ============================================================
-:: 5. 完了
+:: 6. 完了
 :: ============================================================
 echo.
 echo ============================================================
-echo  [5/5] セットアップ完了！
+echo  [6/6] セットアップ完了！
 echo ============================================================
 echo.
 echo 次回からは update-and-run.bat をダブルクリックするだけで

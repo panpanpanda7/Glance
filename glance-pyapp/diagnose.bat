@@ -79,6 +79,24 @@ echo   [OK] モデルファイルは揃っています。
 echo.
 
 :: ============================================================
+:: 診断3.5: llama-server.exe の確認
+:: ============================================================
+echo [診断3.5] llama-server.exe の確認...
+if exist "python-backend\llama-cpp-bin\llama-server.exe" (
+    echo   [OK] llama-server.exe が存在します。
+) else (
+    echo   [NG] llama-server.exe が見つかりません。
+    echo        setup-first-time.bat を再実行してください。
+    echo        手動で配置する場合:
+    echo          1. https://github.com/ggerganov/llama.cpp/releases から
+    echo             llama-b*-bin-win-*-x64.zip をダウンロード
+    echo          2. ZIP を展開し llama-server.exe と DLL を
+    echo             glance-pyapp\python-backend\llama-cpp-bin\ にコピー
+    goto :end
+)
+echo.
+
+:: ============================================================
 :: 診断4: Node.js / Electron の確認
 :: ============================================================
 echo [診断4] Node.js / Electron の確認...
