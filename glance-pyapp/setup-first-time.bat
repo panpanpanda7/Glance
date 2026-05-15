@@ -35,7 +35,8 @@ if %errorlevel% equ 0 (
         echo   [OK] Long Path を有効化しました。
     ) else (
         echo   [ERROR] Long Path の有効化に失敗しました。
-        pause & exit /b 1
+        pause
+    exit /b 1
     )
 )
 echo.
@@ -53,7 +54,8 @@ where git > nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git が見つかりません。
     echo         https://git-scm.com/download/win からインストールしてください。
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
 echo   [OK] Git:
 git --version
@@ -65,7 +67,8 @@ if %errorlevel% neq 0 (
     echo         https://www.python.org/downloads/release/python-3128/
     echo         から Python 3.12 をインストールしてください。
     echo         インストール時に "Add Python to PATH" にチェックを入れてください。
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
 echo   [OK] Python:
 python --version
@@ -84,7 +87,8 @@ if %PY_MAJOR% equ 3 if %PY_MINOR% geq 13 (
     echo.
     echo         Python 3.13 をアンインストール後、Python 3.12 をインストールしてから
     echo         再度このスクリプトを実行してください。
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
 
 :: Node.js
@@ -92,7 +96,8 @@ where node > nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js が見つかりません。
     echo         https://nodejs.org/ から LTS 版をインストールしてください。
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
 echo   [OK] Node.js:
 node --version
@@ -123,7 +128,8 @@ if not exist venv (
     python -m venv venv
     if %errorlevel% neq 0 (
         echo [ERROR] 仮想環境の作成に失敗しました。
-        pause & exit /b 1
+        pause
+    exit /b 1
     )
     echo   [OK] 仮想環境を作成しました。
 )
@@ -149,7 +155,8 @@ if %errorlevel% neq 0 (
         echo.
         echo [ERROR] llama-cpp-python のインストールに失敗しました。
         echo         開発者に連絡してください。
-        pause & exit /b 1
+        pause
+    exit /b 1
     )
 )
 echo   [OK] llama-cpp-python のインストール完了
@@ -164,7 +171,8 @@ if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Python install failed.
     echo         Please check the error above and contact the developer.
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
 echo.
 echo   [OK] Python 依存関係のインストール完了
@@ -181,16 +189,32 @@ echo.
 
 cd /d "%~dp0electron"
 
+echo   対象フォルダ: %CD%
+if not exist package.json (
+    echo [ERROR] package.json が見つかりません。
+    echo         フォルダ構成を確認してください: %CD%
+    pause
+    exit /b 1
+)
+
 :: package-lock.json のハッシュを記録（更新検出用）
 if exist package-lock.json (
     certutil -hashfile package-lock.json MD5 2>nul | findstr /v ":" > ..\python-backend\venv\.npm_hash 2>nul
 )
 
 echo   npm install を実行中...
+echo   （electron のダウンロードに時間がかかる場合があります）
+echo.
 call npm install
-if %errorlevel% neq 0 (
-    echo [ERROR] npm install に失敗しました。
-    pause & exit /b 1
+set NPM_RESULT=%errorlevel%
+echo.
+if %NPM_RESULT% neq 0 (
+    echo ============================================================
+    echo [ERROR] npm install に失敗しました ^(終了コード: %NPM_RESULT%^)
+    echo         上記のエラーメッセージを開発者に共有してください。
+    echo ============================================================
+    pause
+    exit /b 1
 )
 echo   [OK] Node.js 依存関係のインストール完了
 
@@ -239,7 +263,8 @@ if exist "%LLAMA_BIN_DIR%\llama-server.exe" (
         echo            llama-b*-bin-win-*-x64.zip をダウンロード
         echo         2. ZIP を展開し、llama-server.exe と DLL を
         echo            glance-pyapp\python-backend\llama-cpp-bin\ にコピー
-        pause & exit /b 1
+        pause
+    exit /b 1
     )
 )
 echo.
