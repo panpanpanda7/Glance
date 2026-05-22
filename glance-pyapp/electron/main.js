@@ -503,21 +503,6 @@ async function handleScreenCapture() {
       });
     }
 
-    // 読み上げ中
-    if (mainWindow) {
-      mainWindow.webContents.send('status-update', {
-        status: 'speaking',
-        message: '読み上げ中...'
-      });
-    }
-
-    await speak(description, {
-      speed: 1.5,   // 読み上げ速度（0.5-2.0）
-                    // 0.5 = 遅い、1.0 = 標準、1.5 = 速い、2.0 = 非常に速い
-      volume: 1.0,  // 音量（0.0-1.0）
-      language: 'ja-JP'  // 言語
-    });
-
     // 完了
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -628,20 +613,6 @@ async function handleDetailedAnalysis() {
         isDetailed: true
       });
     }
-    
-    // 読み上げ中
-    if (mainWindow) {
-      mainWindow.webContents.send('status-update', {
-        status: 'speaking',
-        message: '詳細情報を読み上げ中...'
-      });
-    }
-    
-    await speak(description, {
-      speed: 1.5,
-      volume: 1.0,
-      language: 'ja-JP'
-    });
     
     // 完了
     if (mainWindow) {
@@ -764,20 +735,6 @@ async function handleQuestionAnalysis(questionText) {
         question: questionText
       });
     }
-    
-    // 読み上げ中
-    if (mainWindow) {
-      mainWindow.webContents.send('status-update', {
-        status: 'speaking',
-        message: '回答を読み上げ中...'
-      });
-    }
-    
-    await speak(description, {
-      speed: 1.5,
-      volume: 1.0,
-      language: 'ja-JP'
-    });
     
     // 完了
     if (mainWindow) {
