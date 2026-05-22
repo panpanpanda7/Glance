@@ -1,39 +1,31 @@
 @echo off
 setlocal enabledelayedexpansion
-
-:: ============================================================
-:: ログ記録ラッパー
-:: 自身を PowerShell Tee-Object 経由で再実行してコンソールとファイルに同時出力
-:: ============================================================
-if not "%1"=="__INNER__" (
-    set LOG_FILE=%~dp0update-and-run.log
-    echo ログファイル: %~dp0update-and-run.log
-    echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "& cmd /c '\"%~f0\" __INNER__ %*' 2>&1 | Tee-Object -FilePath '%~dp0update-and-run.log'"
-    echo.
-    echo ============================================================
-    if %errorlevel% neq 0 (
-        echo  エラーが発生しました。
-    ) else (
-        echo  正常終了しました。
-    )
-    echo  ログ保存先: %~dp0update-and-run.log
-    echo ============================================================
-    pause
-    exit /b
-)
-
 chcp 65001 > nul
 
-echo ============================================================
-echo  Glance - 更新 ^& 起動
-echo  %date% %time%
-echo ============================================================
-echo.
+set LOG_FILE=%~dp0update-and-run.log
+
+:: ログ初期化
+echo [%date% %time%] === Glance update-and-run 開始 === > "%LOG_FILE%"
+
+:: ログ付きechoマクロ
+:: 使い方: call :log "メッセージ"
+goto :main
+
+:log
+echo %~1
+echo %~1 >> "%LOG_FILE%"
+goto :eof
+
+:main
+
+call :log "============================================================"
+call :log " Glance - 更新 & 起動"
+call :log " %date% %time%"
+call :log "============================================================"
+call :log ""
 
 set SKIP_PULL=0
-if "%2"=="--skip-pull" set SKIP_PULL=1
+if "%1"=="--skip-pull" set SKIP_PULL=1
 
 cd /d "%~dp0"
 
@@ -41,30 +33,31 @@ cd /d "%~dp0"
 :: 1. git pull
 :: ============================================================
 if %SKIP_PULL%==0 (
-    echo [1/4] 最新版を取得中 (git pull)...
+    call :log "[1/4] 最新版を取得中 (git pull)..."
+    git pull >> "%LOG_FILE%" 2>&1
     git pull
     if %errorlevel% neq 0 (
-        echo [WARNING] git pull に失敗しました。現在のバージョンで続行します。
+        call :log "[WARNING] git pull に失敗しました。現在のバージョンで続行します。"
     ) else (
-        echo   [OK] 最新版に更新しました。
+        call :log "  [OK] 最新版に更新しました。"
     )
-    echo.
+    call :log ""
 ) else (
-    echo [1/4] git pull をスキップしました。
-    echo.
+    call :log "[1/4] git pull をスキップしました。"
+    call :log ""
 )
 
 :: ============================================================
 :: 2. Python 依存関係の差分更新
 :: ============================================================
-echo [2/4] Python 依存関係の確認...
+call :log "[2/4] Python 依存関係の確認..."
 
 cd /d "%~dp0python-backend"
 
 if not exist venv (
-    echo [ERROR] 仮想環境が見つかりません。
-    echo         先に setup-first-time.bat を実行してください。
-    exit /b 1
+    call :log "[ERROR] 仮想環境が見つかりません。"
+    call :log "        先に setup-first-time.bat を実行してください。"
+    goto :error_end
 )
 
 set REQ_UPDATED=0
@@ -79,18 +72,19 @@ if exist requirements.txt (
 )
 
 if %REQ_UPDATED%==1 (
-    echo   requirements.txt の変更を検出。依存関係を更新します...
+    call :log "  requirements.txt の変更を検出。依存関係を更新します..."
     call venv\Scripts\activate.bat
+    pip install -r requirements.txt --quiet >> "%LOG_FILE%" 2>&1
     pip install -r requirements.txt --quiet
     if %errorlevel% neq 0 (
-        echo [ERROR] Python 依存関係の更新に失敗しました。
-        exit /b 1
+        call :log "[ERROR] Python 依存関係の更新に失敗しました。"
+        goto :error_end
     )
     copy /y "%TEMP%\glance_req_new.txt" venv\.req_hash > nul
     call venv\Scripts\deactivate.bat 2>nul
-    echo   [OK] 更新完了。
+    call :log "  [OK] 更新完了。"
 ) else (
-    echo   [OK] 変更なし。スキップしました。
+    call :log "  [OK] 変更なし。スキップしました。"
 )
 
 cd /d "%~dp0"
@@ -98,19 +92,20 @@ cd /d "%~dp0"
 :: ============================================================
 :: 3. npm 依存関係の差分更新
 :: ============================================================
-echo.
-echo [3/4] Node.js 依存関係の確認...
+call :log ""
+call :log "[3/4] Node.js 依存関係の確認..."
 
 cd /d "%~dp0electron"
 
 if not exist node_modules (
-    echo   node_modules なし。npm install を実行します...
+    call :log "  node_modules なし。npm install を実行します..."
+    call npm install >> "%LOG_FILE%" 2>&1
     call npm install
     if %errorlevel% neq 0 (
-        echo [ERROR] npm install に失敗しました。
-        exit /b 1
+        call :log "[ERROR] npm install に失敗しました。"
+        goto :error_end
     )
-    echo   [OK] インストール完了。
+    call :log "  [OK] インストール完了。"
     goto :npm_done
 )
 
@@ -126,16 +121,17 @@ if exist package-lock.json (
 )
 
 if %NPM_UPDATED%==1 (
-    echo   package-lock.json の変更を検出。npm install を実行します...
+    call :log "  package-lock.json の変更を検出。npm install を実行します..."
+    call npm install >> "%LOG_FILE%" 2>&1
     call npm install
     if %errorlevel% neq 0 (
-        echo [ERROR] npm install に失敗しました。
-        exit /b 1
+        call :log "[ERROR] npm install に失敗しました。"
+        goto :error_end
     )
     copy /y "%TEMP%\glance_npm_new.txt" ..\python-backend\venv\.npm_hash > nul
-    echo   [OK] 更新完了。
+    call :log "  [OK] 更新完了。"
 ) else (
-    echo   [OK] 変更なし。スキップしました。
+    call :log "  [OK] 変更なし。スキップしました。"
 )
 
 :npm_done
@@ -144,19 +140,38 @@ cd /d "%~dp0"
 :: ============================================================
 :: 4. アプリ起動
 :: ============================================================
-echo.
-echo [4/4] Glance を起動します...
-echo   （初回はモデルのロードに 30 秒〜数分かかります）
-echo.
+call :log ""
+call :log "[4/4] Glance を起動します..."
+call :log "  （初回はモデルのロードに 30 秒〜数分かかります）"
+call :log ""
 
 cd /d "%~dp0electron"
+call npm run dev >> "%LOG_FILE%" 2>&1
 call npm run dev
 set APP_RESULT=%errorlevel%
 
 if %APP_RESULT% neq 0 (
-    echo.
-    echo [ERROR] アプリが終了コード %APP_RESULT% で終了しました。
+    call :log ""
+    call :log "[ERROR] アプリが終了コード %APP_RESULT% で終了しました。"
+    goto :error_end
 )
 
-cd /d "%~dp0"
+goto :normal_end
+
+:error_end
+echo.
+echo ============================================================
+echo  エラーが発生しました。
+echo  ログファイルを開発者に共有してください:
+echo  %LOG_FILE%
+echo ============================================================
+pause
+exit /b 1
+
+:normal_end
+echo.
+echo ============================================================
+echo  ログ保存先: %LOG_FILE%
+echo ============================================================
+pause
 endlocal
