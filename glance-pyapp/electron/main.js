@@ -252,7 +252,7 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
 
-  if (process.argv.includes('--dev')) {
+  if (process.argv.includes('--debug')) {
     mainWindow.webContents.openDevTools();
   }
 
