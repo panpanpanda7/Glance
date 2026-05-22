@@ -90,6 +90,24 @@ if %REQ_UPDATED%==1 (
 cd /d "%~dp0"
 
 :: ============================================================
+:: 2.5. llama-server.exe の確認・補完
+:: ============================================================
+set LLAMA_BIN_DIR=%~dp0python-backend\llama-cpp-bin
+if not exist "%LLAMA_BIN_DIR%\llama-server.exe" (
+    call :log ""
+    call :log "[2.5/4] llama-server.exe が見つかりません。ダウンロードします..."
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-llama-server.ps1" -DestDir "%LLAMA_BIN_DIR%"
+    if %errorlevel% neq 0 (
+        call :log "[ERROR] llama-server.exe のダウンロードに失敗しました。"
+        call :log "        手動で download-llama-server.ps1 を実行してください。"
+        goto :error_end
+    )
+    call :log "  [OK] llama-server.exe の準備完了。"
+)
+
+cd /d "%~dp0"
+
+:: ============================================================
 :: 3. npm 依存関係の差分更新
 :: ============================================================
 call :log ""
