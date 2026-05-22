@@ -63,8 +63,6 @@ function renderSentences(text) {
     span.addEventListener('mouseenter', () => {
       document.querySelectorAll('.sentence.speaking').forEach(el => el.classList.remove('speaking'));
       span.classList.add('speaking');
-      window.electronAPI.stopSpeaking();
-      window.electronAPI.speak(sentence);
     });
 
     resultText.appendChild(span);
