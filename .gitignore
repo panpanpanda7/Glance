@@ -5,6 +5,9 @@ glance-pyapp/python-backend/transformers_modules/*
 !glance-pyapp/python-backend/transformers_modules/.gitkeep
 
 
+# Bug reporter token (contains secrets - never commit)
+glance-pyapp/reporter-token.txt
+
 # Development files
 開発書類/
 .DS_Store
