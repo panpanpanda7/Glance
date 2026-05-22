@@ -159,8 +159,25 @@
     .result-text {
       font-size: 14px;
       line-height: 1.6;
-      white-space: pre-wrap;
       word-wrap: break-word;
+    }
+
+    .sentence {
+      display: inline;
+      border-radius: 3px;
+      padding: 1px 2px;
+      cursor: default;
+      transition: background-color 0.15s;
+    }
+
+    .sentence:hover,
+    .sentence:focus {
+      background-color: rgba(255, 255, 255, 0.15);
+      outline: none;
+    }
+
+    .sentence.speaking {
+      background-color: rgba(255, 255, 255, 0.25);
     }
 
     .timestamp {

@@ -35,32 +35,57 @@ window.electronAPI.onStatusUpdate((data) => {
 });
 
 // 分析結果の受信
+// 文単位に分割する
+function splitIntoSentences(text) {
+  const results = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // 。！？で分割（区切り文字は直前の文に含める）
+    const parts = trimmed.match(/[^。！？]*[。！？]|[^。！？]+/g) || [trimmed];
+    for (const part of parts) {
+      if (part.trim()) results.push(part.trim());
+    }
+  }
+  return results;
+}
+
+// 文をspan要素に変換して #result-text に描画する
+function renderSentences(text) {
+  resultText.innerHTML = '';
+  const sentences = splitIntoSentences(text);
+  sentences.forEach((sentence) => {
+    const span = document.createElement('span');
+    span.className = 'sentence';
+    span.textContent = sentence;
+    span.tabIndex = 0;
+
+    span.addEventListener('mouseenter', () => {
+      document.querySelectorAll('.sentence.speaking').forEach(el => el.classList.remove('speaking'));
+      span.classList.add('speaking');
+      window.electronAPI.stopSpeaking();
+      window.electronAPI.speak(sentence);
+    });
+
+    resultText.appendChild(span);
+  });
+}
+
 window.electronAPI.onAnalysisResult((data) => {
   console.log('Analysis result:', data);
-  
-  // 結果を表示
+
   noResult.style.display = 'none';
   resultText.style.display = 'block';
   timestamp.style.display = 'block';
-  
-  resultText.textContent = data.text;
-  
-  // モデル情報も表示
-  if (data.model) {
-    let modelText = `\n\n---`;
-    // 詳細分析結果かどうかを表示
-    if (data.isDetailed) {
-      modelText += ' [詳細モード]';
-    }
-    // 質問結果かどうかを表示
-    if (data.isQuestion) {
-      modelText += ' [質問モード]';
-      // 質問内容も表示
-      resultText.textContent = `Q: ${data.question}\n\nA: ${data.text}`;
-    }
-    resultText.textContent += modelText;
+
+  // 表示テキストを組み立て
+  let displayText = data.text;
+  if (data.isQuestion) {
+    displayText = `Q: ${data.question}\n\nA: ${data.text}`;
   }
-  
+
+  renderSentences(displayText);
+
   // タイムスタンプをフォーマット
   const date = new Date(data.timestamp);
   const formattedTime = date.toLocaleString('ja-JP', {
