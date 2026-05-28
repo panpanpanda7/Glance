@@ -20,6 +20,7 @@ from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
 from models.qwen_vl_gguf import QwenVLGGUFModel
 from models.qwen3_vl_server import Qwen3VLServerModel
+from models.qwen3_vl_server import IMAGE_MAX_SIZE as IMAGE_MAX_SIZE_DEFAULT
 
 # ==========================================
 # WindowsでのUnicode出力エラー対策
@@ -461,12 +462,19 @@ def analyze():
             phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
         
+        # 画像解像度設定（リクエストから取得、未指定はモデルデフォルトを使用）
+        image_max_size_raw = data.get('imageMaxSize', 'default')
+        image_max_size = None if image_max_size_raw == 'none' else (
+            int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
+        )
+
         # 第1段階・第2段階の共通パラメータ
         phase1_options = {
             'temperature': config['prompt']['temperature'],  # 0.0（決定論的）
             'max_tokens': 300,
             'top_p': config['prompt']['topP'],
-            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3)
+            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3),
+            'image_max_size': image_max_size
         }
         
         phase2_options = {
@@ -662,21 +670,28 @@ def analyze_stream():
             phase2_prompt_template = config['prompt']['phase2_summary']
             default_max_tokens = max_tokens_map['standard']
         
+        # 画像解像度設定
+        image_max_size_raw = data.get('imageMaxSize', 'default')
+        image_max_size = None if image_max_size_raw == 'none' else (
+            int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
+        )
+
         # 第1段階・第2段階のパラメータ
         phase1_options = {
             'temperature': config['prompt']['temperature'],
             'max_tokens': 300,
             'top_p': config['prompt']['topP'],
-            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3)
+            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3),
+            'image_max_size': image_max_size
         }
-        
+
         phase2_options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
             'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
         }
-        
+
         print(f"\n📸 【2段階ストリーミング分析】リクエスト受信")
         print(f"   プロンプトタイプ: {prompt_type}")
         

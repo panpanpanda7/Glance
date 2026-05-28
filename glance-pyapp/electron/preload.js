@@ -50,5 +50,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ログメッセージを受信
   onLogMessage: (callback) => {
     ipcRenderer.on('log-message', (_event, text) => callback(text));
-  }
+  },
+
+  // 設定
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings)
 });

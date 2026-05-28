@@ -274,6 +274,40 @@
       min-width: 100px;
     }
 
+    /* 設定行 */
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .settings-row label {
+      font-size: 13px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .settings-row select {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      color: #fff;
+      font-size: 13px;
+      padding: 4px 8px;
+      cursor: pointer;
+      appearance: auto;
+    }
+
+    .settings-row select option {
+      background: #5a4a8a;
+      color: #fff;
+    }
+
     /* 起動ログエリア */
     #startup-logs {
       background: #000;
@@ -330,6 +364,21 @@
       <h2 class="section-label">操作説明</h2>
       <div class="hotkey-hint">
         ホットキー: Ctrl+Shift+G (簡易) / Ctrl+Shift+D (詳細) / Ctrl+Shift+Q (質問)
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-label">設定</h2>
+      <div class="settings-row">
+        <label for="image-size-select">画像解像度</label>
+        <select id="image-size-select">
+          <option value="448">448px — 速い・低精度 (×16)</option>
+          <option value="672">672px — バランス (×24)</option>
+          <option value="896">896px — バランス (×32)</option>
+          <option value="1120">1120px — 高精度・標準 (×40)</option>
+          <option value="1344">1344px — 最高精度・遅い (×48)</option>
+          <option value="none">原寸 — リサイズなし</option>
+        </select>
       </div>
     </section>
 

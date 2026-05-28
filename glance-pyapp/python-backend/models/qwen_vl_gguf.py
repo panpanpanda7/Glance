@@ -100,10 +100,10 @@ class QwenVLGGUFModel(VisionLanguageModel):
             print(f"❌ モデルのロードに失敗しました: {e}")
             raise
     
-    def _encode_image_to_base64(self, image: Image.Image) -> str:
+    def _encode_image_to_base64(self, image: Image.Image, max_size: int | None = IMAGE_MAX_SIZE) -> str:
         """PIL画像をBase64にエンコード"""
-        if IMAGE_MAX_SIZE is not None and max(image.size) > IMAGE_MAX_SIZE:
-            ratio = IMAGE_MAX_SIZE / max(image.size)
+        if max_size is not None and max(image.size) > max_size:
+            ratio = max_size / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
             image = image.resize(new_size, Image.Resampling.LANCZOS)
         
@@ -368,21 +368,22 @@ class QwenVLGGUFModel(VisionLanguageModel):
     def inference_phase1_extraction(self, image: Image.Image, prompt: str, **kwargs) -> dict:
         """
         【第1段階】画像から構造化JSON抽出（response_format JSON mode優先）
-        
+
         Args:
             image: PIL Image
             prompt: 第1段階用プロンプト
-            **kwargs: temperature, max_tokens など
-        
+            **kwargs: temperature, max_tokens, image_max_size など
+
         Returns:
             構造化されたJSON辞書（パース失敗時はフォールバック）
         """
         if not self.is_loaded:
             raise RuntimeError("モデルがロードされていません。先にload()を呼び出してください。")
-        
+
+        image_max_size = kwargs.pop('image_max_size', IMAGE_MAX_SIZE)
         try:
             # 画像をBase64にエンコード
-            image_base64 = self._encode_image_to_base64(image)
+            image_base64 = self._encode_image_to_base64(image, max_size=image_max_size)
             
             # メッセージ構築
             messages = [

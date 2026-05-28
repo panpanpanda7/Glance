@@ -267,16 +267,38 @@ window.electronAPI.onLogMessage((text) => {
   }
 });
 
+// ==========================================
+// 設定UI
+// ==========================================
+const imageSizeSelect = document.getElementById('image-size-select');
+
+async function initSettings() {
+  const settings = await window.electronAPI.getSettings();
+  if (imageSizeSelect && settings.imageMaxSize) {
+    imageSizeSelect.value = settings.imageMaxSize;
+  }
+}
+
+if (imageSizeSelect) {
+  imageSizeSelect.addEventListener('change', async () => {
+    await window.electronAPI.saveSettings({ imageMaxSize: imageSizeSelect.value });
+    console.log('設定を保存しました:', imageSizeSelect.value);
+  });
+}
+
 // ページロード時
 window.addEventListener('DOMContentLoaded', () => {
   console.log('Renderer loaded');
   statusText.textContent = 'Pythonバックエンド起動中...';
-  
+
   // ログエリアを初期化
   if (startupLogs) {
     startupLogs.textContent = 'ログ待機中...';
   }
-  
+
+  // 設定を読み込み
+  initSettings();
+
   // 2秒ごとにシステムステータスをチェック
   statusCheckInterval = setInterval(checkSystemStatus, 2000);
   // 即座に1回チェック

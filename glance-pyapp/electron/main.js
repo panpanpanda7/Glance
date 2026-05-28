@@ -2,6 +2,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, s
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import fs from 'fs';
 import { captureFullScreen } from './utils/screenshot.js';
 import { speak, stopSpeaking } from './utils/tts.js';
 import { 
@@ -28,6 +29,34 @@ let lastCapturedImageBase64 = null; // 直前の画像（Base64エンコード�
 let abortController = null; // 推論中断用のAbortController
 
 const PYTHON_API_URL = 'http://127.0.0.1:5001';
+
+// ==========================================
+// 設定管理
+// ==========================================
+const SETTINGS_DEFAULTS = {
+  imageMaxSize: '1120'  // '448'|'672'|'896'|'1120'|'1344'|'none'
+};
+
+function getSettingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadSettings() {
+  try {
+    const raw = fs.readFileSync(getSettingsPath(), 'utf-8');
+    return { ...SETTINGS_DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    return { ...SETTINGS_DEFAULTS };
+  }
+}
+
+function saveSettings(settings) {
+  const merged = { ...SETTINGS_DEFAULTS, ...settings };
+  fs.writeFileSync(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf-8');
+  return merged;
+}
+
+let appSettings = loadSettings();
 
 /**
  * Pythonバックエンドを起動
@@ -476,7 +505,8 @@ async function handleScreenCapture() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         image: lastCapturedImageBase64,
-        promptType: 'standard'
+        promptType: 'standard',
+        imageMaxSize: appSettings.imageMaxSize
       }),
       signal: abortController.signal
     });
@@ -587,7 +617,8 @@ async function handleDetailedAnalysis() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         image: lastCapturedImageBase64,
-        promptType: 'detailed'
+        promptType: 'detailed',
+        imageMaxSize: appSettings.imageMaxSize
       }),
       signal: abortController.signal
     });
@@ -708,7 +739,8 @@ async function handleQuestionAnalysis(questionText) {
       body: JSON.stringify({
         image: lastCapturedImageBase64,
         promptType: 'question',
-        question: questionText
+        question: questionText,
+        imageMaxSize: appSettings.imageMaxSize
       }),
       signal: abortController.signal
     });
@@ -1066,6 +1098,18 @@ ipcMain.on('overlay-question-submit', async (event, questionText) => {
 ipcMain.on('overlay-question-cancel', () => {
   console.log('❌ 質問がキャンセルされました');
   hideQuestionOverlay();
+});
+
+// 設定取得
+ipcMain.handle('get-settings', () => {
+  appSettings = loadSettings();
+  return appSettings;
+});
+
+// 設定保存
+ipcMain.handle('save-settings', (_event, settings) => {
+  appSettings = saveSettings(settings);
+  return appSettings;
 });
 
 // TTS読み上げ（renderer.jsから呼び出し可能に）
