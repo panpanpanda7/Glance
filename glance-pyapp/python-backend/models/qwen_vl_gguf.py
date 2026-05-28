@@ -12,6 +12,12 @@ from PIL import Image
 from typing import Any, Dict, Generator, Optional
 from .model_interface import VisionLanguageModel
 
+# Qwen-VL の視覚トークンは 28px グリッド (14px パッチ × 2×2) で処理される。
+# 効率的なサイズは 28 の倍数: 448(×16), 672(×24), 896(×32), 1120(×40), 1344(×48)
+# 値を大きくするほど認識精度が上がるが、推論速度と VRAM 消費が増える。
+# None を指定するとリサイズなし（原寸）。
+IMAGE_MAX_SIZE: int | None = 1120
+
 
 class QwenVLGGUFModel(VisionLanguageModel):
     """Qwenx-VL GGUF (llama.cpp) 量子化モデル"""
@@ -96,10 +102,8 @@ class QwenVLGGUFModel(VisionLanguageModel):
     
     def _encode_image_to_base64(self, image: Image.Image) -> str:
         """PIL画像をBase64にエンコード"""
-        # 画像を最適サイズにリサイズ（448px以下）
-        max_size = 448
-        if max(image.size) > max_size:
-            ratio = max_size / max(image.size)
+        if IMAGE_MAX_SIZE is not None and max(image.size) > IMAGE_MAX_SIZE:
+            ratio = IMAGE_MAX_SIZE / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
             image = image.resize(new_size, Image.Resampling.LANCZOS)
         
