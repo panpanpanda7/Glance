@@ -567,22 +567,11 @@ async function handleScreenCapture() {
  * 詳細分析処理
  */
 async function handleDetailedAnalysis() {
-  if (!lastCapturedImageBase64) {
-    console.log('⚠️ 分析する画像がありません。まず画面をキャプチャしてください。');
-    if (mainWindow) {
-      mainWindow.webContents.send('status-update', {
-        status: 'error',
-        message: '画像がありません。先に画面キャプチャを行ってください。'
-      });
-    }
-    return;
-  }
-  
   if (isProcessing) {
     console.log('⚠️ 既に処理中です');
     return;
   }
-  
+
   if (!isPythonReady) {
     console.log('⚠️ Pythonバックエンドが準備できていません');
     if (mainWindow) {
@@ -593,10 +582,21 @@ async function handleDetailedAnalysis() {
     }
     return;
   }
-  
+
   isProcessing = true;
-  
+
   try {
+    // キャプチャ
+    if (mainWindow) {
+      mainWindow.webContents.send('status-update', {
+        status: 'capturing',
+        message: '画面をキャプチャ中...'
+      });
+    }
+
+    const screenshot = await captureFullScreen();
+    lastCapturedImageBase64 = screenshot.toString('base64');
+
     // 詳細分析中
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
