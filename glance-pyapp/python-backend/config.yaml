@@ -5,7 +5,7 @@
 # activeModel: internvl-3_5-4b-gguf
 # activeModel: qwen2_5-vl-3b-gguf
 # activeModel: qwen3-vl-4b-gguf
-activeModel: qwen3-vl-4b-server
+activeModel: qwen2_5-vl-3b-gguf
 
 models:
   # # ===== GGUF量子化モデル（推奨）=====
