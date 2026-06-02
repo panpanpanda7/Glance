@@ -16,7 +16,15 @@ from .model_interface import VisionLanguageModel
 # 効率的なサイズは 28 の倍数: 448(×16), 672(×24), 896(×32), 1120(×40), 1344(×48)
 # 値を大きくするほど認識精度が上がるが、推論速度と VRAM 消費が増える。
 # None を指定するとリサイズなし（原寸）。
-IMAGE_MAX_SIZE: int | None = 1120
+IMAGE_MAX_SIZE: int | None = 896
+
+# Qwen-VL の視覚グリッド(28px)。リサイズ後の縦横をこの倍数に切り捨て整合する。
+VISION_GRID = 28
+
+
+def _floor_to_grid(v: float, grid: int = VISION_GRID) -> int:
+    """v 以下で最大の grid の倍数（最小は grid）"""
+    return max(grid, (int(v) // grid) * grid)
 
 
 class QwenVLGGUFModel(VisionLanguageModel):
@@ -101,12 +109,16 @@ class QwenVLGGUFModel(VisionLanguageModel):
             raise
     
     def _encode_image_to_base64(self, image: Image.Image, max_size: int | None = IMAGE_MAX_SIZE) -> str:
-        """PIL画像をBase64にエンコード"""
-        if max_size is not None and max(image.size) > max_size:
-            ratio = max_size / max(image.size)
-            new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
-        
+        """PIL画像をBase64にエンコード（28pxグリッド整合つき）"""
+        w, h = image.size
+        if max_size is not None and max(w, h) > max_size:
+            ratio = max_size / max(w, h)
+            w, h = w * ratio, h * ratio
+        # 28pxグリッドに切り捨て整合（パディング由来の余分な視覚トークンを排除）
+        target = (_floor_to_grid(w), _floor_to_grid(h))
+        if target != image.size:
+            image = image.resize(target, Image.Resampling.LANCZOS)
+
         # RGB変換
         if image.mode != 'RGB':
             image = image.convert('RGB')
@@ -172,9 +184,11 @@ class QwenVLGGUFModel(VisionLanguageModel):
             raise RuntimeError("モデルがロードされていません。先にload()を呼び出してください。")
         
         try:
-            # 画像をBase64にエンコード
-            image_base64 = self._encode_image_to_base64(image)
-            
+            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
+            image_base64 = self._encode_image_to_base64(
+                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
+            )
+
             # メッセージ構築
             messages = [
                 {
@@ -197,11 +211,11 @@ class QwenVLGGUFModel(VisionLanguageModel):
                     ]
                 }
             ]
-            
+
             # 生成パラメータ
             max_tokens = kwargs.get('max_tokens', 200)
             temperature = kwargs.get('temperature', 0.1)
-            
+
             # 推論実行
             response = self.llm.create_chat_completion(
                 messages=messages,
@@ -243,11 +257,13 @@ class QwenVLGGUFModel(VisionLanguageModel):
             raise RuntimeError("モデルがロードされていません。先にload()を呼び出してください。")
         
         print("🔮 画像分析を開始（ストリーミング）...")
-        
+
         try:
-            # 画像をBase64にエンコード
-            image_base64 = self._encode_image_to_base64(image)
-            
+            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
+            image_base64 = self._encode_image_to_base64(
+                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
+            )
+
             # メッセージ構築
             messages = [
                 {

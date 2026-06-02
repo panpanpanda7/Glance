@@ -15,6 +15,8 @@ import time
 import threading
 import signal
 import atexit
+import hashlib
+from collections import OrderedDict
 import requests
 from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
@@ -42,6 +44,33 @@ CORS(app)  # Electronからのアクセスを許可
 # グローバル変数
 current_model = None
 config = None
+
+# ==========================================
+# 結果キャッシュ（無変化スキップ）
+# 同一画像(バイト一致)＋同一プロンプト種別の再要求は推論せずキャッシュを返す。
+# バイト完全一致のみヒットするため、内容が変われば必ず再推論される（誤返答しない）。
+# ==========================================
+_result_cache = OrderedDict()
+_RESULT_CACHE_MAX = 16
+
+
+def _cache_key(image_bytes, prompt_type, question):
+    h = hashlib.sha256(image_bytes).hexdigest()
+    return f"{h}:{prompt_type}:{question or ''}"
+
+
+def _cache_get(key):
+    if key in _result_cache:
+        _result_cache.move_to_end(key)
+        return _result_cache[key]
+    return None
+
+
+def _cache_put(key, value):
+    _result_cache[key] = value
+    _result_cache.move_to_end(key)
+    while len(_result_cache) > _RESULT_CACHE_MAX:
+        _result_cache.popitem(last=False)
 
 # アプリの状態管理
 app_state = {
@@ -244,6 +273,7 @@ def initialize_system():
             print(f"      自動起動: {auto_start_server}")
             print(f"      コンテキストサイズ: {ctx_size}")
             
+            cpu_opts = active_model_config.get('cpu') or {}
             current_model = Qwen3VLServerModel(
                 model_path=model_path,
                 mmproj_path=mmproj_path,
@@ -252,10 +282,46 @@ def initialize_system():
                 server_port=server_port,
                 auto_start_server=auto_start_server,
                 bundled_server_binary=bundled_server_binary,
-                ctx_size=ctx_size
+                ctx_size=ctx_size,
+                cpu_options=cpu_opts
             )
+
+            # バックエンド自動選定（速度プローブ方式 / Option B）
+            # GPU(-ngl 99)とCPU(-ngl 0)を実測し速い方を採用。手動上書きは config の accel。
+            accel_mode = active_model_config.get('accel', config.get('accel', 'auto'))
+            try:
+                from backend_selector import select_backend
+                binary = current_model._find_server_binary()
+                if binary:
+                    sel = select_backend(
+                        binary, model_path, mmproj_path,
+                        mode=accel_mode, cache_dir=model_dir,
+                        host=server_host, probe_port=server_port + 19,
+                        threads=cpu_opts.get('threads'),
+                    )
+                    current_model.n_gpu_layers = sel['ngl']
+                    print(f"   🧭 バックエンド: ngl={sel['ngl']} ({sel['source']})")
+                else:
+                    print("   ⚠️ バイナリ未検出のためバックエンド判定をスキップ")
+            except Exception as e:
+                print(f"   ⚠️ バックエンド判定エラー（既定で継続）: {e}")
+
             print("   🔄 llama-server に接続・起動中...")
-            current_model.load()
+            try:
+                current_model.load()
+            except Exception as load_err:
+                # GPU構成での起動失敗 → CPUへフォールバックし、次回以降もCPUを記憶
+                if current_model.n_gpu_layers and current_model.n_gpu_layers > 0:
+                    print(f"   ⚠️ GPU起動に失敗（{load_err}）→ CPUで再試行")
+                    current_model.n_gpu_layers = 0
+                    try:
+                        from backend_selector import force_backend
+                        force_backend(model_dir, 0, 'gpu-load-failed')
+                    except Exception:
+                        pass
+                    current_model.load()
+                else:
+                    raise
             print("   ✅ Qwen3VLServerModel ロード完了")
         
         app_state["status"] = "ready"
@@ -368,7 +434,9 @@ def load_model(model_name: str):
             server_host=server_host,
             server_port=server_port,
             auto_start_server=auto_start_server,
-            bundled_server_binary=bundled_server_binary
+            bundled_server_binary=bundled_server_binary,
+            ctx_size=model_config.get('ctx_size', 8192),
+            cpu_options=model_config.get('cpu')
         )
     else:
         raise ValueError(f"不明なモデルタイプ: {model_type}")
@@ -504,23 +572,45 @@ def analyze():
                 'success': False,
                 'error': 'モデルがロードされていません'
             }), 500
-        
-        # ========================
-        # 【第1段階】構造化抽出
-        # ========================
-        phase1_prompt = config['prompt']['phase1_extraction']
-        intermediate_json = current_model.inference_phase1_extraction(
-            image, phase1_prompt, **phase1_options
-        )
-        
-        # ========================
-        # 【第2段階】自然文生成
-        # ========================
-        final_result = current_model.inference_phase2_generation(
-            intermediate_json, phase2_prompt_template, **phase2_options
-        )
-        
-        print(f"✅ 【2段階分析】完了")
+
+        # 無変化スキップ：同一画像＋同一プロンプトならキャッシュ即返し（推論回避）
+        cache_key = _cache_key(image_bytes, prompt_type, data.get('question', ''))
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            print("♻️ 同一画像+プロンプト：キャッシュ結果を返却（推論スキップ）")
+            return jsonify({
+                'success': True,
+                'result': cached,
+                'cached': True,
+                'model': current_model.get_info()
+            })
+
+        if prompt_type == 'standard':
+            # ========================
+            # 【単段】画像から直接、行動指針を生成（Cmd+G）
+            # 中間JSONを経由しないため高速。画像に直接根ざすため情報欠落も防ぐ。
+            # ========================
+            single_prompt = config['prompt']['single_pass_summary']
+            final_result = current_model.inference(
+                image, single_prompt, image_max_size=image_max_size, **phase2_options
+            )
+            intermediate_json = None
+        else:
+            # ========================
+            # 【2段階】detailed / question は構造化抽出→自然文生成
+            # ========================
+            phase1_prompt = config['prompt']['phase1_extraction']
+            intermediate_json = current_model.inference_phase1_extraction(
+                image, phase1_prompt, **phase1_options
+            )
+            final_result = current_model.inference_phase2_generation(
+                intermediate_json, phase2_prompt_template, **phase2_options
+            )
+
+        # キャッシュに保存（次回同一画像+プロンプトで即返し）
+        _cache_put(cache_key, final_result)
+
+        print(f"✅ 【分析】完了")
         print(f"   最終結果: {final_result[:100]}..." if len(final_result) > 100 else f"   最終結果: {final_result}")
         
         # レスポンス構築
@@ -713,44 +803,72 @@ def analyze_stream():
                 'error': 'モデルがロードされていません'
             }), 500
         
+        # 無変化スキップ：同一画像＋同一プロンプトのキャッシュ判定
+        cache_key = _cache_key(image_bytes, prompt_type, data.get('question', ''))
+
         def generate():
             """ストリーミングジェネレーター"""
             start_time = time.time()
             token_count = 0
             first_token_time = None
-            
+
+            # キャッシュヒット時は推論せず一括返却
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                print("♻️ 同一画像+プロンプト：キャッシュ結果を返却（推論スキップ）")
+                yield f"data: {cached}\n\n"
+                yield f"data: [DONE]\n\n"
+                return
+
+            collected = []
             try:
-                # ========================
-                # 【第1段階】構造化抽出（非ストリーミング）
-                # ========================
-                print(f"   🔄 第1段階実行中...")
-                phase1_prompt = config['prompt']['phase1_extraction']
-                intermediate_json = current_model.inference_phase1_extraction(
-                    image, phase1_prompt, **phase1_options
-                )
-                print(f"   ✅ 第1段階完了、第2段階実行中...")
-                
-                # ========================
-                # 【第2段階】自然文生成（ストリーミング）
-                # ========================
-                if not hasattr(current_model, 'inference_phase2_generation_stream'):
-                    # ストリーミング非対応の場合は通常推論で返す
-                    final_result = current_model.inference_phase2_generation(
+                if prompt_type == 'standard':
+                    # ========================
+                    # 【単段ストリーミング】画像から直接生成（Cmd+G）
+                    # 第1段階を挟まないため、第一声までの待ち時間が大幅に短い
+                    # ========================
+                    print(f"   🔄 単段（標準）実行中...")
+                    single_prompt = config['prompt']['single_pass_summary']
+                    stream_iter = current_model.inference_stream(
+                        image, single_prompt, image_max_size=image_max_size, **phase2_options
+                    )
+                else:
+                    # ========================
+                    # 【2段階】Phase1（非ストリーム）→ Phase2（ストリーム）
+                    # ========================
+                    print(f"   🔄 第1段階実行中...")
+                    phase1_prompt = config['prompt']['phase1_extraction']
+                    intermediate_json = current_model.inference_phase1_extraction(
+                        image, phase1_prompt, **phase1_options
+                    )
+                    print(f"   ✅ 第1段階完了、第2段階実行中...")
+
+                    if not hasattr(current_model, 'inference_phase2_generation_stream'):
+                        # ストリーミング非対応の場合は通常推論で返す
+                        final_result = current_model.inference_phase2_generation(
+                            intermediate_json, phase2_prompt_template, **phase2_options
+                        )
+                        _cache_put(cache_key, final_result)
+                        yield f"data: {final_result}\n\n"
+                        yield f"data: [DONE]\n\n"
+                        return
+
+                    stream_iter = current_model.inference_phase2_generation_stream(
                         intermediate_json, phase2_prompt_template, **phase2_options
                     )
-                    yield f"data: {final_result}\n\n"
-                    yield f"data: [DONE]\n\n"
-                    return
-                
-                # ストリーミング推論実行
-                for chunk in current_model.inference_phase2_generation_stream(
-                    intermediate_json, phase2_prompt_template, **phase2_options
-                ):
+
+                # ストリーミング出力（単段・2段階共通）
+                for chunk in stream_iter:
                     if first_token_time is None:
                         first_token_time = time.time() - start_time
-                    
+
                     token_count += 1
+                    collected.append(chunk)
                     yield f"data: {chunk}\n\n"
+
+                # 全文をキャッシュ（次回同一画像+プロンプトで即返し）
+                if collected:
+                    _cache_put(cache_key, "".join(collected).strip())
                 
                 # 性能統計を出力
                 total_time = time.time() - start_time

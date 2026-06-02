@@ -29,6 +29,10 @@ python-runtime/
 *.log
 logs/
 
+# ベンチ結果・バックエンド判定キャッシュ（生成物）
+python-backend/bench_results/
+python-backend/**/backend_cache.json
+
 # OS
 .DS_Store
 Thumbs.db

@@ -22,7 +22,16 @@ from .model_interface import VisionLanguageModel
 # 効率的なサイズは 28 の倍数: 448(×16), 672(×24), 896(×32), 1120(×40), 1344(×48)
 # 値を大きくするほど認識精度が上がるが、推論速度と VRAM 消費が増える。
 # None を指定するとリサイズなし（原寸）。
-IMAGE_MAX_SIZE: int | None = 1120
+IMAGE_MAX_SIZE: int | None = 896
+
+# Qwen-VL の視覚グリッド(28px)。リサイズ後の縦横をこの倍数に切り捨て整合し、
+# 端数のパディングによる余分な視覚トークン生成を防ぐ。
+VISION_GRID = 28
+
+
+def _floor_to_grid(v: float, grid: int = VISION_GRID) -> int:
+    """v 以下で最大の grid の倍数（最小は grid）"""
+    return max(grid, (int(v) // grid) * grid)
 
 
 class Qwen3VLServerModel(VisionLanguageModel):
@@ -38,7 +47,9 @@ class Qwen3VLServerModel(VisionLanguageModel):
         auto_start_server: bool = True,
         bundled_server_binary: str = None,
         server_binary_path: str = None,
-        ctx_size: int = 8192
+        ctx_size: int = 8192,
+        cpu_options: dict = None,
+        n_gpu_layers: int = None
     ):
         """
         初期化
@@ -63,6 +74,11 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.bundled_server_binary = bundled_server_binary
         self.server_binary_path = server_binary_path
         self.ctx_size = ctx_size
+        # CPU最適化オプション(threads / cpu_range / cpu_strict / priority)
+        self.cpu_options = cpu_options or {}
+        # GPUオフロード層数。None=指定なし(llama.cpp既定=CPU)、0=CPU明示、99=フルGPU。
+        # backend_selector の速度プローブ結果がここに設定される。
+        self.n_gpu_layers = n_gpu_layers
         self.health_checked = False
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
@@ -270,7 +286,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 f"❌ llama-server バイナリが見つかりません\n"
                 f"   検索したパス: {getattr(self, '_searched_binary_paths', [])}\n"
                 f"   以下から Windows バイナリをダウンロードしてください:\n"
-                f"   https://github.com/ggerganov/llama.cpp/releases"
+                f"   https://github.com/ggml-org/llama.cpp/releases"
             )
             print(error_msg)
             return False, "バイナリ未検出: " + str(getattr(self, '_searched_binary_paths', []))
@@ -299,16 +315,55 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 print(f"⚠️ ログファイルのオープンに失敗: {e}")
                 log_file = subprocess.DEVNULL
             
+            # CPUスレッド数: 設定があれば優先、無ければ物理コア数。
+            # ※ハイブリッドIntel(P+Eコア)では物理コア数だとEコアにこぼれて遅くなるため、
+            #   config の cpu.threads に「Pコア数」を明示するのが望ましい。
+            cpu = self.cpu_options or {}
+            n_threads = cpu.get("threads")
+            if not n_threads:
+                try:
+                    import psutil
+                    n_threads = psutil.cpu_count(logical=False) or 4
+                except Exception:
+                    n_threads = 4
+
             # llama-server を起動
+            # 無損失系の最適化（全環境で安全）:
+            #   -fa on         : Flash Attention 有効化（高速化＋V量子化の前提）
+            #   -ctk/-ctv q8_0 : KVキャッシュをq8_0に量子化しRAMをほぼ半減（ほぼ無損失）
+            #   -t             : スレッド数（Pコア数推奨）
             cmd = [
                 server_binary,
                 "-m", self.model_path,
                 "--mmproj", self.mmproj_path,
                 "--host", self.server_host,
                 "--port", str(self.server_port),
-                "--ctx-size", str(self.ctx_size)
+                "--ctx-size", str(self.ctx_size),
+                "-fa", "on",
+                "-ctk", "q8_0",
+                "-ctv", "q8_0",
+                "-t", str(n_threads),
             ]
-            
+            # GPUオフロード層数（backend_selector の判定結果。None なら付与しない）
+            if self.n_gpu_layers is not None:
+                cmd += ["-ngl", str(self.n_gpu_layers)]
+
+            # CPUアフィニティ/優先度（ハイブリッドCPUでPコアに固定する用）
+            extra = []
+            if self.n_gpu_layers is not None:
+                extra.append(f"ngl={self.n_gpu_layers}")
+            if cpu.get("cpu_range"):
+                cmd += ["--cpu-range", str(cpu["cpu_range"])]
+                extra.append(f"cpu-range={cpu['cpu_range']}")
+            if cpu.get("cpu_strict"):
+                cmd += ["--cpu-strict", "1"]
+                extra.append("cpu-strict=1")
+            if cpu.get("priority") is not None:
+                cmd += ["--prio", str(cpu["priority"])]
+                extra.append(f"prio={cpu['priority']}")
+            print(f"   最適化フラグ: -fa on / KVキャッシュ q8_0 / threads={n_threads}"
+                  + (" / " + " ".join(extra) if extra else ""))
+
             # Windows の場合は CREATE_NEW_PROCESS_GROUP を使う
             if os.name == 'nt':
                 self.server_process = subprocess.Popen(
@@ -450,7 +505,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                     for path in getattr(self, '_searched_binary_paths', []):
                         error_msg += f"  - {path}\n"
                     error_msg += f"\n以下から Windows バイナリをダウンロードしてください:\n"
-                    error_msg += f"https://github.com/ggerganov/llama.cpp/releases\n"
+                    error_msg += f"https://github.com/ggml-org/llama.cpp/releases\n"
                 
                 # ポート競合の場合
                 elif "ポート競合" in (error_detail or ""):
@@ -518,12 +573,16 @@ class Qwen3VLServerModel(VisionLanguageModel):
         print(f"✅ llama-server への接続が確立されました")
     
     def _encode_image_to_base64(self, image: Image.Image, max_size: int | None = IMAGE_MAX_SIZE) -> str:
-        """PIL画像をBase64にエンコード"""
-        if max_size is not None and max(image.size) > max_size:
-            ratio = max_size / max(image.size)
-            new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
-        
+        """PIL画像をBase64にエンコード（28pxグリッド整合つき）"""
+        w, h = image.size
+        if max_size is not None and max(w, h) > max_size:
+            ratio = max_size / max(w, h)
+            w, h = w * ratio, h * ratio
+        # 28pxグリッドに切り捨て整合（パディング由来の余分な視覚トークンを排除）
+        target = (_floor_to_grid(w), _floor_to_grid(h))
+        if target != image.size:
+            image = image.resize(target, Image.Resampling.LANCZOS)
+
         # RGB変換
         if image.mode != 'RGB':
             image = image.convert('RGB')
@@ -587,9 +646,11 @@ class Qwen3VLServerModel(VisionLanguageModel):
             raise RuntimeError("llama-server に接続されていません。先に load() を呼び出してください。")
         
         try:
-            # 画像をBase64にエンコード
-            image_base64 = self._encode_image_to_base64(image)
-            
+            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
+            image_base64 = self._encode_image_to_base64(
+                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
+            )
+
             # メッセージ構築
             messages = [
                 {
@@ -612,11 +673,11 @@ class Qwen3VLServerModel(VisionLanguageModel):
                     ]
                 }
             ]
-            
+
             # 生成パラメータ
             max_tokens = kwargs.get('max_tokens', 200)
             temperature = kwargs.get('temperature', 0.1)
-            
+
             # llama-server への POST リクエスト
             payload = {
                 "messages": messages,
@@ -663,11 +724,13 @@ class Qwen3VLServerModel(VisionLanguageModel):
             raise RuntimeError("llama-server に接続されていません。先に load() を呼び出してください。")
         
         print("🔮 画像分析を開始（ストリーミング）...")
-        
+
         try:
-            # 画像をBase64にエンコード
-            image_base64 = self._encode_image_to_base64(image)
-            
+            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
+            image_base64 = self._encode_image_to_base64(
+                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
+            )
+
             # メッセージ構築
             messages = [
                 {

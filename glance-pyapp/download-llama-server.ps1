@@ -7,16 +7,25 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host "  Fetching latest llama.cpp release from GitHub API..."
 try {
-    $rel = (Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest" -UseBasicParsing).Content | ConvertFrom-Json
+    $rel = (Invoke-WebRequest -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -UseBasicParsing).Content | ConvertFrom-Json
 } catch {
     Write-Host "[ERROR] Failed to connect to GitHub API: $_"
     exit 1
 }
 Write-Host "  Release: $($rel.tag_name)"
 
+# Prefer the Vulkan build: runs on CPU via -ngl 0 AND on any Vulkan iGPU/GPU via
+# -ngl 99. The app's startup probe (backend_selector) decides GPU vs CPU per machine.
 $asset = $rel.assets | Where-Object {
-    $_.name -match "bin-win.*x64.*\.zip$" -and $_.name -notmatch "cuda|opencl|hipblas"
+    $_.name -match "bin-win-vulkan-x64.*\.zip$"
 } | Select-Object -First 1
+
+if (-not $asset) {
+    Write-Host "  [WARN] Vulkan build not found. Falling back to CPU build."
+    $asset = $rel.assets | Where-Object {
+        $_.name -match "bin-win.*x64.*\.zip$" -and $_.name -notmatch "cuda|opencl|hipblas|vulkan|arm64"
+    } | Select-Object -First 1
+}
 
 if (-not $asset) {
     Write-Host "[ERROR] Windows x64 binary not found."
@@ -24,6 +33,8 @@ if (-not $asset) {
     $rel.assets | ForEach-Object { Write-Host "  - $($_.name)" }
     exit 1
 }
+
+Write-Host "  Selected asset: $($asset.name)"
 
 Write-Host "  Downloading: $($asset.name)"
 Write-Host "  (This may take several minutes...)"
