@@ -40,7 +40,7 @@ jobs:
         # GitHub API で最新リリース情報を取得
         Write-Host "📥 GitHub API から最新リリース情報を取得中..."
         try {
-          $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest" -Headers @{"Accept"="application/vnd.github.v3+json"}
+          $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers @{"Accept"="application/vnd.github.v3+json"}
           $latestRelease = $response.Content | ConvertFrom-Json
           Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
         } catch {
@@ -59,14 +59,24 @@ jobs:
         Write-Host "🔍 Windows x64 バイナリを検索中..."
         $windowsAsset = $null
         
-        # 優先順位: llama-b*-bin-win-x64.zip > llama-b*-bin-win-x86_64.zip > その他
+        # 優先: Vulkan ビルド。CPU は -ngl 0 で動作し、対応 iGPU/GPU では -ngl 99 で
+        # GPU 動作する単一バイナリ。バックエンドの GPU/CPU 切替は起動時プローブ(backend_selector)が決定。
         foreach ($asset in $latestRelease.assets) {
-          $name = $asset.name
-          # CPU向けの Windows x64 バイナリを探す（CUDA/GPU向けは除外）
-          if ($name -match "bin-win.*x64.*\.zip$" -and $name -notmatch "cuda|opencl|hipblas") {
+          if ($asset.name -match "bin-win-vulkan-x64.*\.zip$") {
             $windowsAsset = $asset
-            Write-Host "✅ Windows バイナリ検出: $name"
+            Write-Host "✅ Vulkan ビルド検出: $($asset.name)"
             break
+          }
+        }
+        # フォールバック: Vulkan 資産が無い場合は CPU ビルド
+        if (-not $windowsAsset) {
+          foreach ($asset in $latestRelease.assets) {
+            $name = $asset.name
+            if ($name -match "bin-win.*x64.*\.zip$" -and $name -notmatch "cuda|opencl|hipblas|vulkan|arm64") {
+              $windowsAsset = $asset
+              Write-Host "⚠️ Vulkan 未検出。CPU ビルドにフォールバック: $name"
+              break
+            }
           }
         }
         

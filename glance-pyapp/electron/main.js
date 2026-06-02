@@ -26,6 +26,69 @@ let pythonProcess = null;
 let isProcessing = false;
 let isPythonReady = false;
 let lastCapturedImageBase64 = null; // 直前の画像（Base64エンコード済み）
+let lastCaptureTime = 0; // 直前キャプチャ時刻(ms)。G直後のDで画像を再利用する判定に使用
+const CAPTURE_REUSE_MS = 4000; // この時間内のG→DはキャプチャせずGの画像を再利用しKVキャッシュを活かす
+
+/**
+ * /analyze-stream を SSE で消費し、文の区切りごとに analysis-result を逐次送る。
+ * 全文の完成を待たず「第一文を TTFT(数秒)で表示」できるため体感が大幅に速くなる。
+ * @param {object} body リクエストボディ(image / promptType / [question] / imageMaxSize)
+ * @param {object} resultMeta analysis-result に付与する追加情報(isDetailed / isQuestion / question)
+ * @returns {Promise<string>} 最終的な全文
+ */
+async function streamAnalyze(body, resultMeta) {
+  abortController = new AbortController();
+  const response = await fetch(`${PYTHON_API_URL}/analyze-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: abortController.signal
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`サーバーエラー (HTTP ${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buf = '';
+  let full = '';
+  let sentCount = -1;      // 送信済みの文区切り数(チラつき防止のスロットル用)
+  let firstToken = true;
+
+  const pushResult = (done) => {
+    if (!mainWindow) return;
+    mainWindow.webContents.send('analysis-result', {
+      text: full,
+      timestamp: new Date().toISOString(),
+      streaming: !done,
+      ...resultMeta
+    });
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6);
+      if (payload === '[DONE]') { pushResult(true); return full; }
+      if (payload.startsWith('[ERROR]')) {
+        throw new Error(payload.slice(7).trim() || '推論エラー');
+      }
+      if (firstToken) { stopProgressSound(); firstToken = false; } // 応答開始で継続音を止める
+      full += payload;
+      // 文区切り(。！？)が増えたときだけ再描画してチラつきを抑える
+      const terms = (full.match(/[。！？]/g) || []).length;
+      if (terms > sentCount) { sentCount = terms; pushResult(false); }
+    }
+  }
+  pushResult(true);
+  return full;
+}
 let abortController = null; // 推論中断用のAbortController
 
 const PYTHON_API_URL = 'http://127.0.0.1:5001';
@@ -34,7 +97,7 @@ const PYTHON_API_URL = 'http://127.0.0.1:5001';
 // 設定管理
 // ==========================================
 const SETTINGS_DEFAULTS = {
-  imageMaxSize: '1120'  // '448'|'672'|'896'|'1120'|'1344'|'none'
+  imageMaxSize: '896'  // '448'|'672'|'896'|'1120'|'1344'|'none'。896が精度を落とさず軽い既定
 };
 
 function getSettingsPath() {
@@ -484,6 +547,7 @@ async function handleScreenCapture() {
 
     const screenshot = await captureFullScreen();
     lastCapturedImageBase64 = screenshot.toString('base64'); // エンコード済みデータを保存
+    lastCaptureTime = Date.now();
     
     // 分析中
     if (mainWindow) {
@@ -496,42 +560,16 @@ async function handleScreenCapture() {
     // 推論継続音を開始
     startProgressSound();
 
-    // AbortControllerを作成（推論中断用）
-    abortController = new AbortController();
-
-    // Python APIに送信（標準プロンプト）
-    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: lastCapturedImageBase64,
-        promptType: 'standard',
-        imageMaxSize: appSettings.imageMaxSize
-      }),
-      signal: abortController.signal
-    });
-
-    const data = await response.json();
-
-    if (!data.success) {
-      throw new Error(data.error);
-    }
-
-    const description = data.result;
+    // ストリーミングで解析（第一文が TTFT で届くので体感が速い）
+    const description = await streamAnalyze({
+      image: lastCapturedImageBase64,
+      promptType: 'standard',
+      imageMaxSize: appSettings.imageMaxSize
+    }, { isDetailed: false });
     console.log('📝 生成された説明:', description);
-    
-    // 推論継続音を停止
-    stopProgressSound();
 
-    // 結果を表示
-    if (mainWindow) {
-      mainWindow.webContents.send('analysis-result', {
-        text: description,
-        timestamp: new Date().toISOString(),
-        model: data.model,
-        isDetailed: false
-      });
-    }
+    // 推論継続音を停止（streamAnalyze 内で第一トークン時に停止済みだが念のため）
+    stopProgressSound();
 
     // 完了
     if (mainWindow) {
@@ -594,8 +632,15 @@ async function handleDetailedAnalysis() {
       });
     }
 
-    const screenshot = await captureFullScreen();
-    lastCapturedImageBase64 = screenshot.toString('base64');
+    // G（または直近のキャプチャ）直後の短時間なら撮り直さず再利用する。
+    // 同一画像なら llama-server のKVキャッシュで画像prefillが再利用され、Dの初動が速くなる。
+    if (lastCapturedImageBase64 && (Date.now() - lastCaptureTime) < CAPTURE_REUSE_MS) {
+      console.log('♻️ 直前のキャプチャを再利用（画像prefillのKV再利用で高速化）');
+    } else {
+      const screenshot = await captureFullScreen();
+      lastCapturedImageBase64 = screenshot.toString('base64');
+      lastCaptureTime = Date.now();
+    }
 
     // 詳細分析中
     if (mainWindow) {
@@ -608,42 +653,16 @@ async function handleDetailedAnalysis() {
     // 推論継続音を開始
     startProgressSound();
     
-    // AbortControllerを作成（推論中断用）
-    abortController = new AbortController();
-    
-    // API送信（詳細プロンプト）
-    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: lastCapturedImageBase64,
-        promptType: 'detailed',
-        imageMaxSize: appSettings.imageMaxSize
-      }),
-      signal: abortController.signal
-    });
-    
-    const data = await response.json();
-    
-    if (!data.success) {
-      throw new Error(data.error);
-    }
-    
-    const description = data.result;
+    // ストリーミングで解析（2段階でも Phase2 が順次届く）
+    const description = await streamAnalyze({
+      image: lastCapturedImageBase64,
+      promptType: 'detailed',
+      imageMaxSize: appSettings.imageMaxSize
+    }, { isDetailed: true });
     console.log('📝 詳細分析の結果:', description);
-    
+
     // 推論継続音を停止
     stopProgressSound();
-    
-    // 結果を表示
-    if (mainWindow) {
-      mainWindow.webContents.send('analysis-result', {
-        text: description,
-        timestamp: new Date().toISOString(),
-        model: data.model,
-        isDetailed: true
-      });
-    }
     
     // 完了
     if (mainWindow) {
@@ -729,44 +748,17 @@ async function handleQuestionAnalysis(questionText) {
     // 推論継続音を開始
     startProgressSound();
     
-    // AbortControllerを作成（推論中断用）
-    abortController = new AbortController();
-    
-    // API送信（質問プロンプト）
-    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: lastCapturedImageBase64,
-        promptType: 'question',
-        question: questionText,
-        imageMaxSize: appSettings.imageMaxSize
-      }),
-      signal: abortController.signal
-    });
-    
-    const data = await response.json();
-    
-    if (!data.success) {
-      throw new Error(data.error);
-    }
-    
-    const description = data.result;
+    // ストリーミングで解析（回答が順次届く）
+    const description = await streamAnalyze({
+      image: lastCapturedImageBase64,
+      promptType: 'question',
+      question: questionText,
+      imageMaxSize: appSettings.imageMaxSize
+    }, { isQuestion: true, question: questionText });
     console.log('📝 質問への回答:', description);
-    
+
     // 推論継続音を停止
     stopProgressSound();
-    
-    // 結果を表示
-    if (mainWindow) {
-      mainWindow.webContents.send('analysis-result', {
-        text: description,
-        timestamp: new Date().toISOString(),
-        model: data.model,
-        isQuestion: true,
-        question: questionText
-      });
-    }
     
     // 完了
     if (mainWindow) {
