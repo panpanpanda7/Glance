@@ -42,8 +42,9 @@ MMPROJ_2B = MODELS_DIR / "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"
 # モデル対決(shootout)用の候補。ファイルが無いものは自動スキップ。
 GEMMA4_MODEL = MODELS_DIR / "gemma-4-E4B-it-Q4_K_M.gguf"
 GEMMA4_MMPROJ = MODELS_DIR / "mmproj-gemma-4-E4B-it-Q8_0.gguf"
-QWEN35_MODEL = MODELS_DIR / "Qwen3.5-VL-4B-Instruct-Q4_K_M.gguf"
-QWEN35_MMPROJ = MODELS_DIR / "mmproj-Qwen3.5-VL-4B-Instruct-Q8_0.gguf"
+# Qwen3.5はビジョン統合型(VLの別ラインなし)。unsloth/Qwen3.5-4B-GGUF より。
+QWEN35_MODEL = MODELS_DIR / "Qwen3.5-4B-Q4_K_M.gguf"
+QWEN35_MMPROJ = MODELS_DIR / "mmproj-Qwen3.5-4B-F16.gguf"
 
 
 def build_shootout_trials(mt):

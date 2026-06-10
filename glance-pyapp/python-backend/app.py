@@ -283,7 +283,8 @@ def initialize_system():
                 auto_start_server=auto_start_server,
                 bundled_server_binary=bundled_server_binary,
                 ctx_size=ctx_size,
-                cpu_options=cpu_opts
+                cpu_options=cpu_opts,
+                use_mlock=active_model_config.get('mlock', False)
             )
 
             # バックエンド自動選定（速度プローブ方式 / Option B）
@@ -436,7 +437,8 @@ def load_model(model_name: str):
             auto_start_server=auto_start_server,
             bundled_server_binary=bundled_server_binary,
             ctx_size=model_config.get('ctx_size', 8192),
-            cpu_options=model_config.get('cpu')
+            cpu_options=model_config.get('cpu'),
+            use_mlock=model_config.get('mlock', False)
         )
     else:
         raise ValueError(f"不明なモデルタイプ: {model_type}")
@@ -469,21 +471,22 @@ def get_status():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     """
-    画像を分析してテキストを生成（2段階生成）
-    
+    画像を分析してテキストを生成（単段生成）
+
+    全タイプとも画像から直接生成する。旧2段階(画像→JSON→文)は
+    第2段階が画像を見ないため情報が欠落し、第1段階の生成分だけ遅かった。
+
     Request Body:
         {
             "image": "base64_encoded_image",
             "promptType": "standard" | "detailed" | "question",
-            "question": "質問文（promptType='question'の場合）",
-            "debug": false
+            "question": "質問文（promptType='question'の場合）"
         }
-    
+
     Response:
         {
             "success": true,
             "result": "最終的な説明文",
-            "intermediate": {...},  // debug=true の場合のみ
             "model": {...}
         }
     """
@@ -506,53 +509,36 @@ def analyze():
         
         # プロンプトタイプを取得（デフォルトは 'standard'）
         prompt_type = data.get('promptType', 'standard')
-        debug = data.get('debug', False)
-        
-        # プロンプトタイプに応じてプロンプトとmaxTokensを選択
-        max_tokens_map = {
-            'standard': config['prompt']['maxTokens']['summary'],    # 150
-            'detailed': config['prompt']['maxTokens']['detailed'],   # 400
-            'question': config['prompt']['maxTokens']['question']    # 200
-        }
-        
-        if prompt_type == 'standard':
-            phase2_prompt_template = config['prompt']['phase2_summary']
-            default_max_tokens = max_tokens_map['standard']
-        elif prompt_type == 'detailed':
-            phase2_prompt_template = config['prompt']['phase2_detailed']
-            default_max_tokens = max_tokens_map['detailed']
+
+        # プロンプトタイプに応じて単段プロンプトとmaxTokensを選択。
+        # question は画像+質問を直接渡す（旧2段階は質問文だけがモデルに渡り
+        # 画面情報ゼロで回答するバグがあった）。
+        if prompt_type == 'detailed':
+            prompt = config['prompt']['single_pass_detailed']
+            default_max_tokens = config['prompt']['maxTokens']['detailed']
         elif prompt_type == 'question':
             question_text = data.get('question', '')
-            phase2_prompt_template = config['prompt']['questionPrompt'].format(question=question_text)
-            default_max_tokens = max_tokens_map['question']
+            prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            default_max_tokens = config['prompt']['maxTokens']['question']
         else:
-            # 未知のプロンプトタイプの場合はデフォルト
-            phase2_prompt_template = config['prompt']['phase2_summary']
-            default_max_tokens = max_tokens_map['standard']
-        
+            prompt = config['prompt']['single_pass_summary']
+            default_max_tokens = config['prompt']['maxTokens']['summary']
+
         # 画像解像度設定（リクエストから取得、未指定はモデルデフォルトを使用）
         image_max_size_raw = data.get('imageMaxSize', 'default')
         image_max_size = None if image_max_size_raw == 'none' else (
             int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
         )
 
-        # 第1段階・第2段階の共通パラメータ
-        phase1_options = {
-            'temperature': config['prompt']['temperature'],  # 0.0（決定論的）
-            'max_tokens': 300,
-            'top_p': config['prompt']['topP'],
-            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3),
-            'image_max_size': image_max_size
-        }
-        
-        phase2_options = {
+        # 生成パラメータ（repetition_penalty はレガシーモデルのみで有効）
+        gen_options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
             'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
         }
-        
-        print(f"\n📸 【2段階分析】リクエスト受信")
+
+        print(f"\n📸 【単段分析】リクエスト受信")
         print(f"   プロンプトタイプ: {prompt_type}")
         
         # Base64をPIL Imageに変換
@@ -585,27 +571,11 @@ def analyze():
                 'model': current_model.get_info()
             })
 
-        if prompt_type == 'standard':
-            # ========================
-            # 【単段】画像から直接、行動指針を生成（Cmd+G）
-            # 中間JSONを経由しないため高速。画像に直接根ざすため情報欠落も防ぐ。
-            # ========================
-            single_prompt = config['prompt']['single_pass_summary']
-            final_result = current_model.inference(
-                image, single_prompt, image_max_size=image_max_size, **phase2_options
-            )
-            intermediate_json = None
-        else:
-            # ========================
-            # 【2段階】detailed / question は構造化抽出→自然文生成
-            # ========================
-            phase1_prompt = config['prompt']['phase1_extraction']
-            intermediate_json = current_model.inference_phase1_extraction(
-                image, phase1_prompt, **phase1_options
-            )
-            final_result = current_model.inference_phase2_generation(
-                intermediate_json, phase2_prompt_template, **phase2_options
-            )
+        # 【単段】画像から直接生成。中間JSONを経由しないため高速で、
+        # 画像に直接根ざすため情報欠落も防ぐ。
+        final_result = current_model.inference(
+            image, prompt, image_max_size=image_max_size, **gen_options
+        )
 
         # キャッシュに保存（次回同一画像+プロンプトで即返し）
         _cache_put(cache_key, final_result)
@@ -619,11 +589,7 @@ def analyze():
             'result': final_result,
             'model': current_model.get_info()
         }
-        
-        # debugモードでは中間JSONも返す
-        if debug:
-            response['intermediate'] = intermediate_json
-        
+
         return jsonify(response)
         
     except Exception as e:
@@ -702,19 +668,19 @@ def get_models():
 @app.route('/analyze-stream', methods=['POST'])
 def analyze_stream():
     """
-    画像を分析してストリーミング形式でテキストを生成（2段階生成）
+    画像を分析してストリーミング形式でテキストを生成（単段生成）
     視覚障害者への即時フィードバック用
-    
-    フロー:
-    - 第1段階（非ストリーミング）: 画像から構造化JSON抽出
-    - 第2段階（ストリーミング）: JSONから自然文説明生成
-    
+
+    全タイプとも画像から直接ストリーミング生成する。
+    第1段階(JSON抽出・非ストリーム)を挟まないため第一声までが速い。
+
     Request Body:
         {
             "image": "base64_encoded_image",
-            "promptType": "standard" | "detailed"
+            "promptType": "standard" | "detailed" | "question",
+            "question": "質問文（promptType='question'の場合）"
         }
-    
+
     Response:
         Server-Sent Events (text/event-stream)
         各チャンクは "data: {text}" 形式で送信
@@ -738,51 +704,36 @@ def analyze_stream():
         
         # プロンプトタイプを取得
         prompt_type = data.get('promptType', 'standard')
-        
-        # プロンプトタイプに応じてプロンプトとmaxTokensを選択
-        max_tokens_map = {
-            'standard': config['prompt']['maxTokens']['summary'],
-            'detailed': config['prompt']['maxTokens']['detailed'],
-            'question': config['prompt']['maxTokens']['question']
-        }
-        
-        if prompt_type == 'standard':
-            phase2_prompt_template = config['prompt']['phase2_summary']
-            default_max_tokens = max_tokens_map['standard']
-        elif prompt_type == 'detailed':
-            phase2_prompt_template = config['prompt']['phase2_detailed']
-            default_max_tokens = max_tokens_map['detailed']
+
+        # プロンプトタイプに応じて単段プロンプトとmaxTokensを選択。
+        # question は画像+質問を直接渡す（旧2段階は質問文だけがモデルに渡り
+        # 画面情報ゼロで回答するバグがあった）。
+        if prompt_type == 'detailed':
+            prompt = config['prompt']['single_pass_detailed']
+            default_max_tokens = config['prompt']['maxTokens']['detailed']
         elif prompt_type == 'question':
             question_text = data.get('question', '')
-            phase2_prompt_template = config['prompt']['questionPrompt'].format(question=question_text)
-            default_max_tokens = max_tokens_map['question']
+            prompt = config['prompt']['questionPrompt'].format(question=question_text)
+            default_max_tokens = config['prompt']['maxTokens']['question']
         else:
-            phase2_prompt_template = config['prompt']['phase2_summary']
-            default_max_tokens = max_tokens_map['standard']
-        
+            prompt = config['prompt']['single_pass_summary']
+            default_max_tokens = config['prompt']['maxTokens']['summary']
+
         # 画像解像度設定
         image_max_size_raw = data.get('imageMaxSize', 'default')
         image_max_size = None if image_max_size_raw == 'none' else (
             int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
         )
 
-        # 第1段階・第2段階のパラメータ
-        phase1_options = {
-            'temperature': config['prompt']['temperature'],
-            'max_tokens': 300,
-            'top_p': config['prompt']['topP'],
-            'repetition_penalty': config['prompt'].get('repetition_penalty', 1.3),
-            'image_max_size': image_max_size
-        }
-
-        phase2_options = {
+        # 生成パラメータ（repetition_penalty はレガシーモデルのみで有効）
+        gen_options = {
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
             'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
         }
 
-        print(f"\n📸 【2段階ストリーミング分析】リクエスト受信")
+        print(f"\n📸 【単段ストリーミング分析】リクエスト受信")
         print(f"   プロンプトタイプ: {prompt_type}")
         
         # Base64をPIL Imageに変換
@@ -822,42 +773,14 @@ def analyze_stream():
 
             collected = []
             try:
-                if prompt_type == 'standard':
-                    # ========================
-                    # 【単段ストリーミング】画像から直接生成（Cmd+G）
-                    # 第1段階を挟まないため、第一声までの待ち時間が大幅に短い
-                    # ========================
-                    print(f"   🔄 単段（標準）実行中...")
-                    single_prompt = config['prompt']['single_pass_summary']
-                    stream_iter = current_model.inference_stream(
-                        image, single_prompt, image_max_size=image_max_size, **phase2_options
-                    )
-                else:
-                    # ========================
-                    # 【2段階】Phase1（非ストリーム）→ Phase2（ストリーム）
-                    # ========================
-                    print(f"   🔄 第1段階実行中...")
-                    phase1_prompt = config['prompt']['phase1_extraction']
-                    intermediate_json = current_model.inference_phase1_extraction(
-                        image, phase1_prompt, **phase1_options
-                    )
-                    print(f"   ✅ 第1段階完了、第2段階実行中...")
+                # 【単段ストリーミング】画像から直接生成。
+                # 第1段階を挟まないため、第一声までの待ち時間が大幅に短い
+                print(f"   🔄 単段（{prompt_type}）実行中...")
+                stream_iter = current_model.inference_stream(
+                    image, prompt, image_max_size=image_max_size, **gen_options
+                )
 
-                    if not hasattr(current_model, 'inference_phase2_generation_stream'):
-                        # ストリーミング非対応の場合は通常推論で返す
-                        final_result = current_model.inference_phase2_generation(
-                            intermediate_json, phase2_prompt_template, **phase2_options
-                        )
-                        _cache_put(cache_key, final_result)
-                        yield f"data: {final_result}\n\n"
-                        yield f"data: [DONE]\n\n"
-                        return
-
-                    stream_iter = current_model.inference_phase2_generation_stream(
-                        intermediate_json, phase2_prompt_template, **phase2_options
-                    )
-
-                # ストリーミング出力（単段・2段階共通）
+                # ストリーミング出力
                 for chunk in stream_iter:
                     if first_token_time is None:
                         first_token_time = time.time() - start_time
@@ -874,7 +797,7 @@ def analyze_stream():
                 total_time = time.time() - start_time
                 tps = token_count / total_time if total_time > 0 else 0
                 
-                print(f"✅ 【2段階ストリーミング分析】完了")
+                print(f"✅ 【単段ストリーミング分析】完了")
                 print(f"   📊 TTFT (初動時間): {first_token_time:.2f}s")
                 print(f"   📊 TPS (トークン/秒): {tps:.2f}")
                 print(f"   📊 総時間: {total_time:.2f}s")

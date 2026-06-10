@@ -49,7 +49,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
         server_binary_path: str = None,
         ctx_size: int = 8192,
         cpu_options: dict = None,
-        n_gpu_layers: int = None
+        n_gpu_layers: int = None,
+        use_mlock: bool = False
     ):
         """
         初期化
@@ -79,6 +80,9 @@ class Qwen3VLServerModel(VisionLanguageModel):
         # GPUオフロード層数。None=指定なし(llama.cpp既定=CPU)、0=CPU明示、99=フルGPU。
         # backend_selector の速度プローブ結果がここに設定される。
         self.n_gpu_layers = n_gpu_layers
+        # --mlock: モデル重みを物理RAMに固定。他アプリのRAM圧迫でmmapページが
+        # 破棄→推論毎にディスク再読込で激遅化するのを防ぐ（低RAM機では要実機判断）
+        self.use_mlock = use_mlock
         self.health_checked = False
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
@@ -352,6 +356,10 @@ class Qwen3VLServerModel(VisionLanguageModel):
             extra = []
             if self.n_gpu_layers is not None:
                 extra.append(f"ngl={self.n_gpu_layers}")
+            # メモリ常駐（Teams等のRAM圧迫によるページアウト→TTFT激増を防止）
+            if self.use_mlock:
+                cmd += ["--mlock"]
+                extra.append("mlock")
             if cpu.get("cpu_range"):
                 cmd += ["--cpu-range", str(cpu["cpu_range"])]
                 extra.append(f"cpu-range={cpu['cpu_range']}")
