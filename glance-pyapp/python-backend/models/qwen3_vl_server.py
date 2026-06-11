@@ -50,7 +50,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
         ctx_size: int = 8192,
         cpu_options: dict = None,
         n_gpu_layers: int = None,
-        use_mlock: bool = False
+        use_mlock: bool = False,
+        extra_chat_payload: dict = None
     ):
         """
         初期化
@@ -83,6 +84,10 @@ class Qwen3VLServerModel(VisionLanguageModel):
         # --mlock: モデル重みを物理RAMに固定。他アプリのRAM圧迫でmmapページが
         # 破棄→推論毎にディスク再読込で激遅化するのを防ぐ（低RAM機では要実機判断）
         self.use_mlock = use_mlock
+        # チャットAPIへ常に付与する追加ペイロード。
+        # 例: Qwen3.5系の思考モード無効化 {"chat_template_kwargs": {"enable_thinking": false}}
+        # （思考モードのままだと出力が思考に消費され本文が空になる）
+        self.extra_chat_payload = extra_chat_payload or {}
         self.health_checked = False
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
@@ -694,7 +699,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": False
             }
-            
+            payload.update(self.extra_chat_payload)
+
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
                 json=payload,
@@ -774,7 +780,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": True
             }
-            
+            payload.update(self.extra_chat_payload)
+
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
                 json=payload,
@@ -928,7 +935,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.85),
                 "stream": False
             }
-            
+            payload.update(self.extra_chat_payload)
+
             print(f"   📝 JSON mode で推論実行...")
             
             response = requests.post(
@@ -1021,7 +1029,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.85),
                 "stream": False
             }
-            
+            payload.update(self.extra_chat_payload)
+
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
                 json=payload,
@@ -1087,7 +1096,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.85),
                 "stream": True
             }
-            
+            payload.update(self.extra_chat_payload)
+
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
                 json=payload,

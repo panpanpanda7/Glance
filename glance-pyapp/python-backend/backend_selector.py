@@ -41,6 +41,13 @@ def _machine_signature() -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _cache_key(model_key: str | None) -> str:
+    """マシン署名 + モデル名。モデルが変わるとGPU/CPUの最適解も変わり得る
+    （小型モデルだけiGPUに収まる等）ため、モデル別に判定をキャッシュする。"""
+    sig = _machine_signature()
+    return f"{sig}:{model_key}" if model_key else sig
+
+
 def _synthetic_image_b64(w: int = 896, h: int = 504) -> str:
     """プローブ用の合成画像（視覚トークン数は解像度で決まるので内容は単純でよい）"""
     img = Image.new("RGB", (w, h), (250, 250, 250))
@@ -160,11 +167,11 @@ def _save_cache(cache_path, data):
         pass
 
 
-def force_backend(cache_dir, ngl, reason="forced"):
-    """このマシンの判定を強制上書き（例: GPU起動失敗時にCPUを記憶）"""
+def force_backend(cache_dir, ngl, reason="forced", model_key=None):
+    """このマシン×モデルの判定を強制上書き（例: GPU起動失敗時にCPUを記憶）"""
     cache_path = os.path.join(cache_dir, "backend_cache.json")
     cache = _load_cache(cache_path)
-    cache[_machine_signature()] = {
+    cache[_cache_key(model_key)] = {
         "version": CACHE_VERSION, "ngl": ngl,
         "gpu_time": None, "cpu_time": None, "ts": time.time(), "reason": reason,
     }
@@ -173,7 +180,7 @@ def force_backend(cache_dir, ngl, reason="forced"):
 
 def select_backend(binary, model_path, mmproj_path, *, mode="auto",
                    cache_dir, host="127.0.0.1", probe_port=8099,
-                   threads=None, log=print):
+                   threads=None, model_key=None, log=print):
     """
     使用すべき n_gpu_layers を決める。
     戻り値: {"ngl": int, "source": str, "gpu_time": float|None, "cpu_time": float|None}
@@ -186,7 +193,7 @@ def select_backend(binary, model_path, mmproj_path, *, mode="auto",
 
     # mode == auto
     cache_path = os.path.join(cache_dir, "backend_cache.json")
-    sig = _machine_signature()
+    sig = _cache_key(model_key)
     cache = _load_cache(cache_path)
     cached = cache.get(sig)
     if cached and cached.get("version") == CACHE_VERSION:

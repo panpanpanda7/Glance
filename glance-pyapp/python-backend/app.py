@@ -141,11 +141,16 @@ def initialize_system():
         print("🔄 バックグラウンド初期化処理を開始...")
         print("="*60 + "\n")
         
-        # 1. アクティブモデルを config から取得
+        # 1. アクティブモデルを取得。環境変数 GLANCE_MODEL が config より優先
+        # （update-and-run-light.bat 等の「別起動」でモデルを切り替えるための仕組み。
+        #  実行時切替だと2モデル分のRAMを食うため、起動時に1つだけ選ぶ）
         print("📋 [ステップ1] アクティブモデルの確認...")
-        active_model_name = config.get('activeModel')
+        env_model = os.environ.get('GLANCE_MODEL')
+        active_model_name = env_model or config.get('activeModel')
+        if env_model:
+            print(f"   🔀 環境変数 GLANCE_MODEL でモデルを上書き: {env_model}")
         if not active_model_name or active_model_name not in config.get('models', {}):
-            raise ValueError(f"config.yaml に有効な activeModel が設定されていません: {active_model_name}")
+            raise ValueError(f"有効なモデルが設定されていません (GLANCE_MODEL/activeModel): {active_model_name}")
         
         print(f"   ✅ アクティブモデル: {active_model_name}")
         
@@ -284,7 +289,8 @@ def initialize_system():
                 bundled_server_binary=bundled_server_binary,
                 ctx_size=ctx_size,
                 cpu_options=cpu_opts,
-                use_mlock=active_model_config.get('mlock', False)
+                use_mlock=active_model_config.get('mlock', False),
+                extra_chat_payload=active_model_config.get('extra_chat_payload')
             )
 
             # バックエンド自動選定（速度プローブ方式 / Option B）
@@ -299,6 +305,7 @@ def initialize_system():
                         mode=accel_mode, cache_dir=model_dir,
                         host=server_host, probe_port=server_port + 19,
                         threads=cpu_opts.get('threads'),
+                        model_key=model_filename,
                     )
                     current_model.n_gpu_layers = sel['ngl']
                     print(f"   🧭 バックエンド: ngl={sel['ngl']} ({sel['source']})")
@@ -317,7 +324,8 @@ def initialize_system():
                     current_model.n_gpu_layers = 0
                     try:
                         from backend_selector import force_backend
-                        force_backend(model_dir, 0, 'gpu-load-failed')
+                        force_backend(model_dir, 0, 'gpu-load-failed',
+                                      model_key=model_filename)
                     except Exception:
                         pass
                     current_model.load()
@@ -438,7 +446,8 @@ def load_model(model_name: str):
             bundled_server_binary=bundled_server_binary,
             ctx_size=model_config.get('ctx_size', 8192),
             cpu_options=model_config.get('cpu'),
-            use_mlock=model_config.get('mlock', False)
+            use_mlock=model_config.get('mlock', False),
+            extra_chat_payload=model_config.get('extra_chat_payload')
         )
     else:
         raise ValueError(f"不明なモデルタイプ: {model_type}")
