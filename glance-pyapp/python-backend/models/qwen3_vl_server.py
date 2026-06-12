@@ -449,12 +449,23 @@ class Qwen3VLServerModel(VisionLanguageModel):
             print(error_msg)
             return False, f"予期しないエラー: {str(e)}"
     
-    def _wait_for_server(self, max_retries: int = 60, retry_interval: float = 1.0) -> bool:
+    def _get_served_model_path(self) -> Optional[str]:
+        """起動中の llama-server が配信しているモデルパスを取得（判定不能なら None）"""
+        try:
+            props = requests.get(f"{self.server_url}/props", timeout=5).json()
+            return props.get("model_path") or None
+        except Exception:
+            return None
+
+    def _wait_for_server(self, max_retries: int = 180, retry_interval: float = 1.0) -> bool:
         """
         llama-server が起動するまで待機（health check）
-        
+
+        低スペック機では初回のモデルロード（数GBのディスク読み込み）が
+        60秒を超えることがあるため、待ち時間は長めに取る。
+
         Args:
-            max_retries: 最大試行回数（デフォルト: 60回 = 60秒）
+            max_retries: 最大試行回数（デフォルト: 180回 = 180秒）
             retry_interval: 再試行間隔（デフォルト: 1.0秒）
         
         Returns:
@@ -487,12 +498,25 @@ class Qwen3VLServerModel(VisionLanguageModel):
             return
         
         print(f"📦 Qwen3-VL Server接続確認中: {self.server_url}")
-        
+
         # 1. まず health check を試みる（既に起動しているかもしれない）
         try:
             response = requests.get(f"{self.server_url}/health", timeout=5)
             if response.status_code == 200:
-                print(f"✅ llama-server は既に起動しています")
+                # 既存サーバーを再利用する前に、配信中のモデルが想定どおりか確認する。
+                # 前回の異常終了で残った「別モデル」のサーバー（標準⇔高速モードの
+                # 取り違え等）を黙って使うと、エラーや謎の低速化・品質劣化につながる。
+                served = self._get_served_model_path()
+                if served and os.path.basename(served) != os.path.basename(self.model_path):
+                    raise RuntimeError(
+                        f"❌ ポート {self.server_port} に別モデルの llama-server が残っています\n\n"
+                        f"  起動中のモデル: {served}\n"
+                        f"  想定するモデル: {self.model_path}\n\n"
+                        f"前回の Glance が正しく終了できなかった可能性があります。\n"
+                        f"update-and-run.bat（または update-and-run-light.bat）から起動し直すと、\n"
+                        f"残ったプロセスを自動で停止してからクリーンに起動します。"
+                    )
+                print(f"✅ llama-server は既に起動しています（モデル一致を確認）")
                 self.health_checked = True
                 self.is_loaded = True
                 return

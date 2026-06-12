@@ -30,6 +30,15 @@ if "%1"=="--skip-pull" set SKIP_PULL=1
 cd /d "%~dp0"
 
 :: ============================================================
+:: 0. 既存の Glance 関連プロセスを停止（クリーン起動）
+::    前回の異常終了で残った llama-server 等がポート占有・RAM圧迫・
+::    別モデルの誤掴みを起こすため、起動前に必ず掃除する。
+:: ============================================================
+call :log "[0/4] 既存のGlanceプロセスを確認・停止中..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0stop-glance.ps1' 2>&1 | Tee-Object -FilePath '%LOG_FILE%' -Append"
+call :log ""
+
+:: ============================================================
 :: 1. git pull
 :: ============================================================
 if %SKIP_PULL%==0 (
@@ -91,18 +100,29 @@ cd /d "%~dp0"
 
 :: ============================================================
 :: 2.5. llama-server.exe の確認・補完
+::    .build-info.txt はダウンロード時に書かれるマーカー。
+::    これが無い = Vulkan対応化(2026-06)より前の旧CPU専用バイナリ
+::    なので、一度だけ最新版に入れ替える（GPU搭載機が劇的に速くなる）。
 :: ============================================================
 set LLAMA_BIN_DIR=%~dp0python-backend\llama-cpp-bin
-if not exist "%LLAMA_BIN_DIR%\llama-server.exe" (
+set NEED_LLAMA=0
+if not exist "%LLAMA_BIN_DIR%\llama-server.exe" set NEED_LLAMA=1
+if not exist "%LLAMA_BIN_DIR%\.build-info.txt" set NEED_LLAMA=1
+if %NEED_LLAMA%==1 (
     call :log ""
-    call :log "[2.5/4] llama-server.exe が見つかりません。ダウンロードします..."
+    call :log "[2.5/4] llama-server.exe が無いか旧版のため、最新版をダウンロードします..."
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-llama-server.ps1" -DestDir "%LLAMA_BIN_DIR%"
-    if %errorlevel% neq 0 (
-        call :log "[ERROR] llama-server.exe のダウンロードに失敗しました。"
-        call :log "        手動で download-llama-server.ps1 を実行してください。"
-        goto :error_end
+    if !errorlevel! neq 0 (
+        if exist "%LLAMA_BIN_DIR%\llama-server.exe" (
+            call :log "[WARNING] 最新版のダウンロードに失敗しました。手元の旧バイナリで続行します。"
+        ) else (
+            call :log "[ERROR] llama-server.exe のダウンロードに失敗しました。"
+            call :log "        手動で download-llama-server.ps1 を実行してください。"
+            goto :error_end
+        )
+    ) else (
+        call :log "  [OK] llama-server.exe の準備完了。"
     )
-    call :log "  [OK] llama-server.exe の準備完了。"
 )
 
 cd /d "%~dp0"

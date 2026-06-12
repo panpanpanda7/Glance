@@ -41,11 +41,21 @@ def _machine_signature() -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _cache_key(model_key: str | None) -> str:
-    """マシン署名 + モデル名。モデルが変わるとGPU/CPUの最適解も変わり得る
-    （小型モデルだけiGPUに収まる等）ため、モデル別に判定をキャッシュする。"""
+def _cache_key(model_key: str | None, binary=None) -> str:
+    """マシン署名 + モデル名 + バイナリサイズ。モデルが変わるとGPU/CPUの最適解も
+    変わり得る（小型モデルだけiGPUに収まる等）ため、モデル別に判定をキャッシュする。
+    バイナリサイズを含めるのは、llama-server の入れ替え（例: 旧CPU専用ビルド→
+    Vulkanビルド）の際に古い判定を捨てて再プローブさせるため。"""
     sig = _machine_signature()
-    return f"{sig}:{model_key}" if model_key else sig
+    parts = [sig]
+    if model_key:
+        parts.append(str(model_key))
+    if binary:
+        try:
+            parts.append(str(os.path.getsize(binary)))
+        except OSError:
+            pass
+    return ":".join(parts)
 
 
 def _synthetic_image_b64(w: int = 896, h: int = 504) -> str:
@@ -167,11 +177,11 @@ def _save_cache(cache_path, data):
         pass
 
 
-def force_backend(cache_dir, ngl, reason="forced", model_key=None):
+def force_backend(cache_dir, ngl, reason="forced", model_key=None, binary=None):
     """このマシン×モデルの判定を強制上書き（例: GPU起動失敗時にCPUを記憶）"""
     cache_path = os.path.join(cache_dir, "backend_cache.json")
     cache = _load_cache(cache_path)
-    cache[_cache_key(model_key)] = {
+    cache[_cache_key(model_key, binary)] = {
         "version": CACHE_VERSION, "ngl": ngl,
         "gpu_time": None, "cpu_time": None, "ts": time.time(), "reason": reason,
     }
@@ -193,7 +203,7 @@ def select_backend(binary, model_path, mmproj_path, *, mode="auto",
 
     # mode == auto
     cache_path = os.path.join(cache_dir, "backend_cache.json")
-    sig = _cache_key(model_key)
+    sig = _cache_key(model_key, binary)
     cache = _load_cache(cache_path)
     cached = cache.get(sig)
     if cached and cached.get("version") == CACHE_VERSION:

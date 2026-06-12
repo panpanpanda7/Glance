@@ -325,7 +325,8 @@ def initialize_system():
                     try:
                         from backend_selector import force_backend
                         force_backend(model_dir, 0, 'gpu-load-failed',
-                                      model_key=model_filename)
+                                      model_key=model_filename,
+                                      binary=current_model._find_server_binary())
                     except Exception:
                         pass
                     current_model.load()

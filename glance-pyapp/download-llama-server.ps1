@@ -62,6 +62,10 @@ if (-not $exe) {
 if (-not (Test-Path $DestDir)) { New-Item -ItemType Directory -Path $DestDir -Force | Out-Null }
 
 Copy-Item -Path "$($exe.Directory.FullName)\*" -Destination $DestDir -Force
+
+# Marker for update-and-run.bat: records which build is installed.
+# Its absence means a legacy (pre-Vulkan) install that should be re-downloaded.
+Set-Content -Path (Join-Path $DestDir '.build-info.txt') -Value "$($rel.tag_name) $($asset.name)"
 Write-Host "  [OK] llama-server.exe placed at: $DestDir"
 
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
