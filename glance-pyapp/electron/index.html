@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" 
-        content="default-src 'self'; 
-                 script-src 'self' 'unsafe-inline'; 
-                 style-src 'self' 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline';
+                 style-src 'self' 'unsafe-inline';
+                 connect-src 'self' http://127.0.0.1:5001;">
   <title>Glance - AI画面読み上げ</title>
   <style>
     * {
@@ -19,7 +20,7 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: #fff;
-      padding: 20px;
+      padding: 14px;
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -30,56 +31,42 @@
       height: 100%;
       display: flex;
       flex-direction: column;
-      gap: 15px;
+      gap: 10px;
     }
 
-    h1 {
-      font-size: 24px;
+    /* ヘッダー（タイトル + ステータス1行） */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .topbar h1 {
+      font-size: 20px;
       font-weight: 600;
-      text-align: center;
-      margin-bottom: 10px;
-    }
-
-    h2 {
-      font-size: 14px;
-    }
-
-    .section-label {
-      font-size: 11px;
-      font-weight: 500;
-      opacity: 0.7;
-      margin-bottom: 3px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .subtitle {
-      text-align: center;
-      font-size: 12px;
-      opacity: 0.8;
-      margin-top: -5px;
-      margin-bottom: 10px;
-    }
-
-    .status-card {
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 12px;
-      padding: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
     }
 
     .status-indicator {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-size: 16px;
+      gap: 8px;
+      font-size: 12px;
+      opacity: 0.9;
+      min-width: 0;
+    }
+
+    .status-indicator span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .status-dot {
-      width: 12px;
-      height: 12px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
+      flex-shrink: 0;
       animation: pulse 2s ease-in-out infinite;
     }
 
@@ -87,7 +74,8 @@
       background-color: #10b981;
     }
 
-    .status-dot.loading {
+    .status-dot.loading,
+    .status-dot.connecting {
       background-color: #f59e0b;
     }
 
@@ -110,100 +98,219 @@
       }
     }
 
-    .controls {
-      display: flex;
-      gap: 10px;
-    }
-
-    button {
-      flex: 1;
-      padding: 15px;
-      font-size: 16px;
-      font-weight: 600;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: all 0.2s;
-      color: #fff;
-    }
-
-    button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    button:active {
-      transform: translateY(0);
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border: 2px solid rgba(255, 255, 255, 0.3);
-    }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.2);
-      border: 2px solid rgba(255, 255, 255, 0.3);
-    }
-
-    .result-card {
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 12px;
-      padding: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .result-text {
-      font-size: 14px;
-      line-height: 1.6;
-      word-wrap: break-word;
-    }
-
-    .sentence {
-      display: block;
-      border-radius: 3px;
-      padding: 2px 4px;
-      cursor: default;
-      transition: background-color 0.15s;
-    }
-
-    .sentence:hover,
-    .sentence:focus {
-      background-color: rgba(255, 255, 255, 0.15);
-      outline: none;
-    }
-
-    .sentence.speaking {
-      background-color: rgba(255, 255, 255, 0.25);
-    }
-
-    .timestamp {
-      font-size: 12px;
-      opacity: 0.7;
-      margin-top: 10px;
-    }
-
-    .model-info {
-      font-size: 12px;
-      opacity: 0.8;
-      text-align: center;
-      margin-top: 5px;
-    }
-
+    /* 簡素な操作説明 */
     .hotkey-hint {
       text-align: center;
       font-size: 14px;
-      opacity: 0.8;
-      margin-top: 10px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .hotkey-hint kbd {
+      font-family: inherit;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+
+    /* チャット（認識結果ウィンドウ） */
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      padding: 14px;
     }
 
     .no-result {
+      margin: auto;
       text-align: center;
-      opacity: 0.5;
+      opacity: 0.6;
       font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 85%;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .msg.ai {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble {
+      background: #06c755;
+      color: #fff;
+      border-top-right-radius: 4px;
+    }
+
+    .msg.ai .bubble {
+      background: rgba(255, 255, 255, 0.95);
+      color: #333;
+      border-top-left-radius: 4px;
+    }
+
+    .msg.ai.guide .bubble {
+      background: rgba(255, 235, 170, 0.95);
+      color: #4a3b00;
+    }
+
+    .msg.ai.error .bubble {
+      background: rgba(255, 220, 220, 0.95);
+      color: #8a1f1f;
+    }
+
+    .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      opacity: 0.75;
+      margin-top: 4px;
+    }
+
+    .speak-btn {
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border-radius: 12px;
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .speak-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .speak-btn.speaking {
+      background: #ef4444;
+      border-color: #ef4444;
+    }
+
+    /* 折りたたみ（詳細設定・ログ） */
+    details.advanced {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      padding: 8px 12px;
+      flex-shrink: 0;
+    }
+
+    details.advanced summary {
+      cursor: pointer;
+      font-size: 12px;
+      opacity: 0.85;
+      user-select: none;
+    }
+
+    details.advanced[open] summary {
+      margin-bottom: 8px;
+    }
+
+    .advanced-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .advanced-hint {
+      font-size: 12px;
+      opacity: 0.8;
+      line-height: 1.6;
+    }
+
+    /* 設定行 */
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .settings-row label {
+      font-size: 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .settings-row select {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      color: #fff;
+      font-size: 12px;
+      padding: 4px 8px;
+      cursor: pointer;
+      appearance: auto;
+    }
+
+    .settings-row select option {
+      background: #5a4a8a;
+      color: #fff;
+    }
+
+    /* 起動ログエリア */
+    #startup-logs {
+      background: #000;
+      color: #00ff00;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      height: 90px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      line-height: 1.4;
+    }
+
+    #startup-logs::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #startup-logs::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    #startup-logs::-webkit-scrollbar-thumb {
+      background: rgba(0, 255, 0, 0.5);
+      border-radius: 4px;
+    }
+
+    #startup-logs::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 255, 0, 0.7);
     }
 
     /* 質問モーダル */
@@ -272,132 +379,69 @@
       flex: 0 0 auto;
       padding: 12px 24px;
       min-width: 100px;
-    }
-
-    /* 設定行 */
-    .settings-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      background: rgba(255, 255, 255, 0.1);
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
       border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-
-    .settings-row label {
-      font-size: 13px;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
-    .settings-row select {
-      flex: 1;
-      background: rgba(255, 255, 255, 0.15);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      border-radius: 5px;
-      color: #fff;
-      font-size: 13px;
-      padding: 4px 8px;
       cursor: pointer;
-      appearance: auto;
-    }
-
-    .settings-row select option {
-      background: #5a4a8a;
+      transition: all 0.2s;
       color: #fff;
     }
 
-    /* 起動ログエリア */
-    #startup-logs {
-      background: #000;
-      color: #00ff00;
-      font-family: 'Courier New', monospace;
-      font-size: 11px;
-      padding: 6px 10px;
-      border-radius: 8px;
-      height: 70px;
-      overflow-y: auto;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      white-space: pre-wrap;
-      word-wrap: break-word;
-      line-height: 1.4;
+    .modal-buttons button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
 
-    #startup-logs::-webkit-scrollbar {
-      width: 8px;
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: 2px solid rgba(255, 255, 255, 0.3);
     }
 
-    #startup-logs::-webkit-scrollbar-track {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-    }
-
-    #startup-logs::-webkit-scrollbar-thumb {
-      background: rgba(0, 255, 0, 0.5);
-      border-radius: 4px;
-    }
-
-    #startup-logs::-webkit-scrollbar-thumb:hover {
-      background: rgba(0, 255, 0, 0.7);
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.3);
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <section>
-      <h2 class="section-label">アプリ名</h2>
+    <header class="topbar">
       <h1>Glance</h1>
-    </section>
-    
-    <section>
-      <h2 class="section-label">ステータス</h2>
-      <div class="status-card">
-        <div class="status-indicator">
-          <div class="status-dot loading" id="status-dot"></div>
-          <span id="status-text">起動中...</span>
+      <div class="status-indicator">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">起動中...</span>
+      </div>
+    </header>
+
+    <p class="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
+
+    <div class="chat" id="chat" aria-live="polite">
+      <div class="no-result" id="no-result">
+        Ctrl+Shift+G を押すと、<br>ここに認識結果が表示されます
+      </div>
+    </div>
+
+    <details class="advanced">
+      <summary>詳細設定・ログ</summary>
+      <div class="advanced-body">
+        <p class="advanced-hint">
+          その他のホットキー: Ctrl+Shift+D（詳細説明） / Ctrl+Shift+Q（画面への質問）
+        </p>
+        <div class="settings-row">
+          <label for="image-size-select">画像解像度</label>
+          <select id="image-size-select">
+            <option value="448">448px — 速い・低精度 (×16)</option>
+            <option value="672">672px — バランス (×24)</option>
+            <option value="896">896px — 標準・推奨 (×32)</option>
+            <option value="1120">1120px — 高精度 (×40)</option>
+            <option value="1344">1344px — 最高精度・遅い (×48)</option>
+            <option value="none">原寸 — リサイズなし</option>
+          </select>
         </div>
+        <div id="startup-logs">ログ待機中...</div>
       </div>
-    </section>
-
-    <section>
-      <h2 class="section-label">操作説明</h2>
-      <div class="hotkey-hint">
-        ホットキー: Ctrl+Shift+G (簡易) / Ctrl+Shift+D (詳細) / Ctrl+Shift+Q (質問)
-      </div>
-    </section>
-
-    <section>
-      <h2 class="section-label">設定</h2>
-      <div class="settings-row">
-        <label for="image-size-select">画像解像度</label>
-        <select id="image-size-select">
-          <option value="448">448px — 速い・低精度 (×16)</option>
-          <option value="672">672px — バランス (×24)</option>
-          <option value="896">896px — 標準・推奨 (×32)</option>
-          <option value="1120">1120px — 高精度 (×40)</option>
-          <option value="1344">1344px — 最高精度・遅い (×48)</option>
-          <option value="none">原寸 — リサイズなし</option>
-        </select>
-      </div>
-    </section>
-
-    <section>
-      <h2 class="section-label">認識結果</h2>
-      <div class="result-card">
-        <div class="no-result" id="no-result">
-          画面をキャプチャすると、ここに詳細な説明が表示されます
-        </div>
-        <div class="result-text" id="result-text" style="display: none;"></div>
-        <div class="timestamp" id="timestamp" style="display: none;"></div>
-      </div>
-    </section>
-
-    <!-- 起動ログ表示エリア -->
-    <section>
-      <h2 class="section-label">ログ情報</h2>
-      <div id="startup-logs">ログ待機中...</div>
-    </section>
+    </details>
   </div>
 
   <!-- 質問モーダル -->
@@ -405,9 +449,9 @@
     <div class="modal-content">
       <h3>💬 画像への質問</h3>
       <p class="modal-subtitle">直前にキャプチャした画面について質問してください</p>
-      
+
       <textarea id="question-input" placeholder="例: 画面上のグラフの最大値は何ですか？&#10;画面中央の表の合計値を教えて&#10;このウェブサイトのメニュー項目は何がありますか？"></textarea>
-      
+
       <div class="modal-buttons">
         <button id="question-cancel" class="btn-secondary">キャンセル</button>
         <button id="question-submit" class="btn-primary">質問する</button>

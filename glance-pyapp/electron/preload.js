@@ -26,13 +26,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 読み上げ停止
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
-  
+
+  // TTSのみ停止（推論は継続。読み上げボタンの停止用）
+  stopTTS: () => ipcRenderer.invoke('stop-tts'),
+
   // TTS読み上げ
   speak: (text, options) => ipcRenderer.invoke('speak', text, options),
-  
+
   // イベントリスナー
   onStatusUpdate: (callback) => {
     ipcRenderer.on('status-update', (event, data) => callback(data));
+  },
+
+  // 分析開始（チャット履歴への吹き出し追加用）
+  onAnalysisStart: (callback) => {
+    ipcRenderer.on('analysis-start', (event, data) => callback(data));
   },
   
   onAnalysisResult: (callback) => {

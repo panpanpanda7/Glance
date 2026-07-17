@@ -97,7 +97,8 @@ const PYTHON_API_URL = 'http://127.0.0.1:5001';
 // 設定管理
 // ==========================================
 const SETTINGS_DEFAULTS = {
-  imageMaxSize: '896'  // '448'|'672'|'896'|'1120'|'1344'|'none'。896が精度を落とさず軽い既定
+  imageMaxSize: '896',  // '448'|'672'|'896'|'1120'|'1344'|'none'。896が精度を落とさず軽い既定
+  guideShown: false     // 初回認識後の「詳細・質問」案内を表示済みか（インストール後1回のみ）
 };
 
 function getSettingsPath() {
@@ -114,7 +115,8 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-  const merged = { ...SETTINGS_DEFAULTS, ...settings };
+  // 既存の保存値とマージする（部分更新で他のキーが既定値に戻らないように）
+  const merged = { ...loadSettings(), ...settings };
   fs.writeFileSync(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf-8');
   return merged;
 }
@@ -535,8 +537,13 @@ async function handleScreenCapture() {
   }
 
   isProcessing = true;
-  
+
   try {
+    // チャット履歴にユーザー操作と応答プレースホルダーを追加させる
+    if (mainWindow) {
+      mainWindow.webContents.send('analysis-start', { type: 'standard' });
+    }
+
     // キャプチャ中
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -624,6 +631,11 @@ async function handleDetailedAnalysis() {
   isProcessing = true;
 
   try {
+    // チャット履歴にユーザー操作と応答プレースホルダーを追加させる
+    if (mainWindow) {
+      mainWindow.webContents.send('analysis-start', { type: 'detailed' });
+    }
+
     // キャプチャ
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -735,8 +747,13 @@ async function handleQuestionAnalysis(questionText) {
   }
   
   isProcessing = true;
-  
+
   try {
+    // チャット履歴にユーザーの質問と応答プレースホルダーを追加させる
+    if (mainWindow) {
+      mainWindow.webContents.send('analysis-start', { type: 'question', question: questionText });
+    }
+
     // 質問分析中
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -1102,6 +1119,12 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (_event, settings) => {
   appSettings = saveSettings(settings);
   return appSettings;
+});
+
+// TTSのみ停止（推論は継続。読み上げボタンの停止用）
+ipcMain.handle('stop-tts', () => {
+  stopSpeaking();
+  return { success: true };
 });
 
 // TTS読み上げ（renderer.jsから呼び出し可能に）
