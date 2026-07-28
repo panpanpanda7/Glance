@@ -15,6 +15,7 @@ import sys
 import time
 import threading
 import signal
+import socket
 import atexit
 import hashlib
 from collections import OrderedDict
@@ -1222,18 +1223,44 @@ if __name__ == '__main__':
         )
         monitor_thread.start()
     
-    # ★バックグラウンドスレッドで初期化を開始
-    print("🔄 バックグラウンドで初期化処理を開始...")
-    threading.Thread(target=initialize_system, daemon=True).start()
-    
-    # Flaskサーバーを起動
     server_config = config.get('server', {})
     host = server_config.get('host', '127.0.0.1')
     port = server_config.get('port', 5001)
     debug = server_config.get('debug', False)
-    
+
+    # ポート競合を先に検出する。
+    # 前回の Glance が残っているとここが埋まっており、そのまま進むと
+    # Flask の起動失敗と初期化スレッドが同時に走って atexit の cleanup が
+    # current_model を None にし、「AttributeError: 'NoneType' object has
+    # no attribute 'n_gpu_layers'」という無関係な例外だけがログに残る。
+    # 原因がまったく読み取れないため、ここで明確に伝えて終了する。
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(1)
+    port_in_use = probe.connect_ex((host, port)) == 0
+    probe.close()
+
+    if port_in_use:
+        message = (
+            f"ポート {port} は既に使用されています。\n"
+            f"前回の Glance がまだ終了していない可能性があります。\n"
+            f"update-and-run.bat（または update-and-run-light.bat）から起動し直すと、\n"
+            f"残ったプロセスを自動で停止してからクリーンに起動します。"
+        )
+        print(f"\n{'='*60}")
+        print(f"❌ 起動できません")
+        print(message)
+        print(f"{'='*60}\n")
+        app_state["status"] = "error"
+        app_state["message"] = "Glanceが既に起動しています"
+        app_state["detail"] = message
+        sys.exit(1)
+
+    # ★バックグラウンドスレッドで初期化を開始
+    print("🔄 バックグラウンドで初期化処理を開始...")
+    threading.Thread(target=initialize_system, daemon=True).start()
+
     print(f"\n{'='*60}")
     print(f"🌐 Flask サーバーを起動: http://{host}:{port}")
     print(f"{'='*60}\n")
-    
+
     app.run(host=host, port=port, debug=debug, threaded=True)

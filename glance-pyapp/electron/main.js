@@ -24,6 +24,8 @@ let mainWindow = null;
 let questionOverlayWindow = null; // 質問入力用の透明オーバーレイウィンドウ
 let tray = null;
 let pythonProcess = null;
+let pythonExitCode = null;      // バックエンドが自ら終了したときの終了コード（起動待ちの打ち切り用）
+let lastBackendDetail = null;   // バックエンドが出力した最後のエラー内容（利用者への説明用）
 let isProcessing = false;
 let isPythonReady = false;
 
@@ -248,6 +250,8 @@ let appSettings = loadSettings();
  */
 async function startPythonBackend() {
   console.log('🐍 Python Backendを起動中...');
+  pythonExitCode = null;
+  lastBackendDetail = null;
   
   // 起動中の断続音を開始
   startProgressSound();
@@ -300,6 +304,17 @@ async function startPythonBackend() {
   pythonProcess.stdout.on('data', (data) => {
     const output = data.toString();
     console.log('[Python STDOUT]', output);
+
+    // バックエンドが起動できずに終了したとき、その理由を利用者へそのまま
+    // 見せられるように控えておく（ポート競合・モデル読み込み失敗など）
+    if (output.includes('❌')) {
+      lastBackendDetail = output
+        .split('\n')
+        .filter(line => line.trim() && !line.startsWith('='))
+        .join('\n')
+        .trim();
+    }
+
     if (mainWindow) {
       mainWindow.webContents.send('log-message', `[STDOUT] ${output.trim()}`);
     }
@@ -331,6 +346,9 @@ async function startPythonBackend() {
       mainWindow.webContents.send('log-message', `[INFO] Pythonプロセスが終了しました (終了コード: ${code})`);
     }
     isPythonReady = false;
+    // 起動待ちループに終了を伝える。これが無いと、バックエンドが
+    // 即死しても「起動処理中...」のまま300秒待たされる
+    pythonExitCode = code;
   });
   
   if (mainWindow) {
@@ -356,6 +374,15 @@ async function waitForPythonBackend() {
   let initializingStartTime = null;
   
   for (let i = 0; i < maxRetries; i++) {
+    // バックエンドが自ら終了していたら、待ち続けても意味がない。
+    // ポート競合など、起動直後に終了する不具合を即座に伝える
+    if (pythonExitCode !== null) {
+      const detail = lastBackendDetail ? `\n\n${lastBackendDetail}` : '';
+      throw new Error(
+        `Pythonバックエンドが起動直後に終了しました（終了コード: ${pythonExitCode}）${detail}`
+      );
+    }
+
     // 【通信部分のみを try/catch で囲む】
     let data;
     try {
@@ -379,13 +406,24 @@ async function waitForPythonBackend() {
     
     // ステータスに応じた処理
     if (status === 'ready') {
+      // 自分が起動したプロセスが既に死んでいるのに ready が返るのは、
+      // 前回の Glance が残っていて、そちらが応答している状態。
+      // ここで気づかないと、別プロセスのモデルを操作しているのに
+      // 正常起動したように見えてしまう。
+      if (pythonExitCode !== null) {
+        throw new Error(
+          `別の Glance が既に起動しているようです（このプロセスは終了コード ${pythonExitCode} で終了）。\n` +
+          `update-and-run.bat から起動し直すと、残ったプロセスを停止してからクリーンに起動します。`
+        );
+      }
+
       console.log('✅ Pythonバックエンドが準備完了しました');
       if (mainWindow) {
         mainWindow.webContents.send('log-message', '[SUCCESS] バックエンド起動完了（モデルロード済み）');
       }
       isPythonReady = true;
       return;
-    } 
+    }
     else if (status === 'downloading' || status === 'loading_model') {
       // ダウンロード・ロード中：待機継続
       if (mainWindow && i % 5 === 0) { // 5秒ごとに通知
