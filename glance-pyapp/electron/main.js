@@ -77,6 +77,7 @@ async function streamAnalyze(body, resultMeta) {
   let full = '';
   let sentCount = -1;      // 送信済みの文区切り数(チラつき防止のスロットル用)
   let firstToken = true;
+  let stoppedBy = null;    // 'loop'（繰り返しで打ち切り）| 'length'（上限に到達）
 
   const pushResult = (done) => {
     if (!mainWindow) return;
@@ -84,6 +85,7 @@ async function streamAnalyze(body, resultMeta) {
       text: full,
       timestamp: new Date().toISOString(),
       streaming: !done,
+      stoppedBy: done ? stoppedBy : null,
       ...resultMeta
     });
   };
@@ -107,7 +109,14 @@ async function streamAnalyze(body, resultMeta) {
       }
 
       if (frame.error) throw new Error(frame.error || '推論エラー');
-      if (frame.done) { pushResult(true); return full; }
+      if (frame.done) {
+        // 完了フレームには確定版の本文が入る。重複除去・繰り返しの打ち切り・
+        // 尻切れの丸めが反映されているので、こちらで置き換える
+        if (typeof frame.text === 'string' && frame.text) full = frame.text;
+        stoppedBy = frame.stoppedBy || null;
+        pushResult(true);
+        return full;
+      }
       if (typeof frame.t !== 'string') continue;
 
       if (firstToken) { stopProgressSound(); firstToken = false; } // 応答開始で継続音を止める
@@ -172,6 +181,13 @@ const HOTKEY_DEFAULTS = {
 const SETTINGS_DEFAULTS = {
   imageMaxSize: '896',  // '448'|'672'|'896'|'1120'|'1344'|'none'。896が精度を落とさず軽い既定
   guideShown: false,    // 初回認識後の「詳細・質問」案内を表示済みか（インストール後1回のみ）
+  // 読み上げ。既定はレンダラーの Web Speech API（'builtin'）。
+  // 'system' は OS 標準の音声合成（PowerShell/say 経由）、'off' は
+  // スクリーンリーダーに任せて Glance からは喋らない
+  ttsMode: 'builtin',
+  ttsRate: 1.5,
+  ttsVoiceURI: '',
+  ttsAutoRead: true,
   hotkeys: { ...HOTKEY_DEFAULTS }
 };
 

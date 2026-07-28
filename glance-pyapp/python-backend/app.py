@@ -180,6 +180,55 @@ def _resolve_image_max_size(raw):
     return int(raw)
 
 
+# ==========================================
+# 出力の停止制御
+#
+# 方針: 「max_tokens を低く設定して打ち切る」のをやめ、
+#   (1) 自然に完結する分は必ず収まる上限を与える
+#   (2) 暴走（同じ文言の繰り返し）は明示的に検知して即座に止める
+# の2本立てにする。従来は (1) を犠牲にして (2) を抑えていたため、
+# 「途中で切れる」と「ループする」がトレードオフになっていた。
+# ==========================================
+
+# ループ判定に使う末尾の窓。全文を走査しないので生成速度に影響しない
+_LOOP_WINDOW = 300
+_LOOP_MIN_UNIT = 8       # これ未満の繰り返し（「、」の連続など）は誤検知になりやすい
+_LOOP_MAX_UNIT = 80
+_LOOP_REPEATS = 3        # 同じ断片が連続3回で暴走とみなす
+
+
+def _looks_looping(text: str) -> bool:
+    """
+    末尾が同じ断片の繰り返しになっていないか判定する
+
+    「〜します。〜します。〜します。」のように、一定長の断片が連続して
+    3回現れたらループとみなす。判定は末尾 _LOOP_WINDOW 文字だけを見るため、
+    生成が長くなっても計算量は一定。
+    """
+    tail = text[-_LOOP_WINDOW:]
+    for unit in range(_LOOP_MIN_UNIT, min(_LOOP_MAX_UNIT, len(tail) // _LOOP_REPEATS) + 1):
+        chunk = tail[-unit:]
+        if not chunk.strip():
+            continue
+        if all(tail[-unit * (i + 1):-unit * i or None] == chunk for i in range(1, _LOOP_REPEATS)):
+            return True
+    return False
+
+
+def _trim_incomplete_tail(text: str) -> str:
+    """
+    文の途中で切れている末尾を落とす
+
+    上限に当たって「〜であり、」で終わると、読み上げでは何が言いたかったのか
+    分からないまま途切れる。最後の句点までを残す。ただし本文の大半を
+    捨てることになる場合は、情報が失われる方が損なのでそのまま返す。
+    """
+    last = max(text.rfind(mark) for mark in ('。', '！', '？'))
+    if last >= 0 and last >= len(text) * 0.5:
+        return text[:last + 1]
+    return text
+
+
 def _sse(payload: dict) -> str:
     """
     SSE の1フレームを組み立てる
@@ -649,7 +698,11 @@ def analyze():
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
-            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
+            # repetition_penalty はレガシーモデル用。llama-server 系は
+            # repeat_penalty / repeat_last_n を使う（logit補正なので温度0でも効く）
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3)),
+            'repeat_penalty': data.get('repeat_penalty', config['prompt'].get('repeat_penalty')),
+            'repeat_last_n': data.get('repeat_last_n', config['prompt'].get('repeat_last_n'))
         }
 
         print(f"\n📸 【単段分析】リクエスト受信")
@@ -895,7 +948,11 @@ def analyze_stream():
             'temperature': data.get('temperature', config['prompt']['temperature']),
             'max_tokens': data.get('max_tokens', default_max_tokens),
             'top_p': data.get('top_p', config['prompt']['topP']),
-            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3))
+            # repetition_penalty はレガシーモデル用。llama-server 系は
+            # repeat_penalty / repeat_last_n を使う（logit補正なので温度0でも効く）
+            'repetition_penalty': data.get('repetition_penalty', config['prompt'].get('repetition_penalty', 1.3)),
+            'repeat_penalty': data.get('repeat_penalty', config['prompt'].get('repeat_penalty')),
+            'repeat_last_n': data.get('repeat_last_n', config['prompt'].get('repeat_last_n'))
         }
 
         print(f"\n📸 【単段ストリーミング分析】リクエスト受信")
@@ -928,17 +985,21 @@ def analyze_stream():
             if cached is not None:
                 print("♻️ 同一画像+プロンプト：キャッシュ結果を返却（推論スキップ）")
                 yield _sse({"t": cached})
-                yield _sse({"done": True})
+                # 完了フレームには常に確定版の本文を載せる（受信側の分岐を減らす）
+                yield _sse({"done": True, "text": cached, "stoppedBy": None})
                 return
 
             collected = []
+            stats = {}
+            stopped_by = None
+            stream_iter = None
             try:
                 # 【単段ストリーミング】画像から直接生成。
                 # 第1段階を挟まないため、第一声までの待ち時間が大幅に短い
                 print(f"   🔄 単段（{prompt_type}）実行中...")
                 stream_iter = current_model.inference_stream(
                     image, prompt, image_max_size=image_max_size,
-                    encoded_image=encoded_image, **gen_options
+                    encoded_image=encoded_image, stats=stats, **gen_options
                 )
 
                 # ストリーミング出力
@@ -950,27 +1011,53 @@ def analyze_stream():
                     collected.append(chunk)
                     yield _sse({"t": chunk})
 
+                    # ループ判定は一定間隔でのみ行う。走査するのも末尾の窓だけなので
+                    # 生成速度への影響はない（暴走を早く切る分むしろ速くなる）
+                    if token_count % 16 == 0 and _looks_looping("".join(collected)):
+                        stopped_by = "loop"
+                        print("   🔁 同じ文言の繰り返しを検知したため生成を打ち切ります")
+                        break
+
+                if stopped_by is None and stats.get("finish_reason") == "length":
+                    stopped_by = "length"
+                    print("   ✂️ 出力上限に達しました（末尾の未完文を整えます）")
+
+                final_text = current_model._clean_output("".join(collected)) \
+                    if hasattr(current_model, "_clean_output") else "".join(collected).strip()
+                if stopped_by:
+                    final_text = _trim_incomplete_tail(final_text)
+
                 # 全文をキャッシュ（次回同一画像+プロンプトで即返し）
-                if collected:
-                    _cache_put(cache_key, "".join(collected).strip())
+                if final_text:
+                    _cache_put(cache_key, final_text)
 
                 # 性能統計を出力
                 total_time = time.time() - start_time
                 tps = token_count / total_time if total_time > 0 else 0
-                
+
                 print(f"✅ 【単段ストリーミング分析】完了")
                 if first_token_time is not None:
                     print(f"   📊 TTFT (初動時間): {first_token_time:.2f}s")
                 print(f"   📊 TPS (トークン/秒): {tps:.2f}")
                 print(f"   📊 総時間: {total_time:.2f}s")
 
-                yield _sse({"done": True})
+                # 確定版の本文を添えて返す。ループ打ち切りの整形・尻切れの丸め・
+                # 重複除去の結果を画面へ反映させるため、受信側はこれで置き換える
+                yield _sse({"done": True, "text": final_text, "stoppedBy": stopped_by})
 
             except Exception as e:
                 print(f"❌ ストリーミングエラー: {e}")
                 import traceback
                 traceback.print_exc()
                 yield _sse({"error": str(e)})
+            finally:
+                # 打ち切った場合はジェネレータを閉じ、llama-server 側の生成も止める。
+                # 閉じないと上限に達するまで裏で生成が続き、次の操作を待たせてしまう
+                if stream_iter is not None:
+                    try:
+                        stream_iter.close()
+                    except Exception:
+                        pass
         
         return Response(
             stream_with_context(generate()),

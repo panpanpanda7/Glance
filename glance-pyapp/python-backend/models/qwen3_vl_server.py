@@ -646,6 +646,31 @@ class Qwen3VLServerModel(VisionLanguageModel):
         image.save(buffer, format='PNG')
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
     
+    def _sampling_params(self, kwargs: dict) -> dict:
+        """
+        繰り返し抑止のサンプラ設定を組み立てる
+
+        これまで llama-server へは max_tokens / temperature / top_p しか
+        渡しておらず、ペナルティが一切効いていなかった。そのため
+        「max_tokens を低く抑えること」だけがループの唯一の歯止めになり、
+        尻切れとループがトレードオフになっていた。
+
+        ペナルティは logit を補正するため temperature=0（貪欲デコード）でも
+        効く。処理コストは直近 repeat_last_n トークンの走査だけで、
+        4B モデルの1回の順伝播に比べれば無視できる。
+
+        値を上げすぎると助詞や繰り返し出現する数値まで避けて不自然になるため、
+        既定は控えめ。実際の暴走はここではなく app.py のループ検知で止める。
+        """
+        params = {}
+        repeat_penalty = kwargs.get('repeat_penalty')
+        if repeat_penalty:
+            params['repeat_penalty'] = repeat_penalty
+        repeat_last_n = kwargs.get('repeat_last_n')
+        if repeat_last_n:
+            params['repeat_last_n'] = repeat_last_n
+        return params
+
     def _resolve_image_b64(self, image: Optional[Image.Image], kwargs: dict) -> str:
         """
         送信する画像Base64を決める。encoded_image が渡されていればそれを使う。
@@ -795,6 +820,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": False
             }
+            payload.update(self._sampling_params(kwargs))
             payload.update(self.extra_chat_payload)
 
             response = requests.post(
@@ -803,10 +829,15 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 timeout=300
             )
             response.raise_for_status()
-            
+
             result_json = response.json()
-            result = result_json['choices'][0]['message']['content']
-            
+            choice = result_json['choices'][0]
+            result = choice['message']['content']
+
+            stats = kwargs.get('stats')
+            if stats is not None and choice.get('finish_reason'):
+                stats['finish_reason'] = choice['finish_reason']
+
             # 後処理
             result = self._clean_output(result)
             
@@ -852,7 +883,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": True
             }
+            payload.update(self._sampling_params(kwargs))
             payload.update(self.extra_chat_payload)
+
+            # 呼び出し側が生成の終わり方を知るための受け皿。
+            # finish_reason == 'length' なら上限に当たって途中で切れている。
+            stats = kwargs.get('stats')
 
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
@@ -861,27 +897,35 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 timeout=300
             )
             response.raise_for_status()
-            
-            # SSE形式でストリーム処理
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8') if isinstance(line, bytes) else line
-                    if line.startswith('data: '):
-                        data_str = line[6:]  # "data: " を除去
-                        if data_str == '[DONE]':
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            if 'choices' in data and len(data['choices']) > 0:
-                                delta = data['choices'][0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    yield content
-                        except json.JSONDecodeError:
-                            pass
-            
+
+            try:
+                # SSE形式でストリーム処理
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode('utf-8') if isinstance(line, bytes) else line
+                        if line.startswith('data: '):
+                            data_str = line[6:]  # "data: " を除去
+                            if data_str == '[DONE]':
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                if 'choices' in data and len(data['choices']) > 0:
+                                    choice = data['choices'][0]
+                                    if stats is not None and choice.get('finish_reason'):
+                                        stats['finish_reason'] = choice['finish_reason']
+                                    content = choice.get('delta', {}).get('content', '')
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                pass
+            finally:
+                # ループ検知などで呼び出し側が途中で打ち切った場合、ここで
+                # 接続を閉じて llama-server 側の生成も止める。閉じないと
+                # 上限に達するまで裏で生成が続き、次の操作を待たせてしまう。
+                response.close()
+
             print("✅ ストリーミング分析完了")
-            
+
         except Exception as e:
             print(f"❌ ストリーミング推論中にエラーが発生: {e}")
             raise
