@@ -279,6 +279,68 @@
       color: #fff;
     }
 
+    .settings-row input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 8px;
+    }
+
+    .settings-row input[type="text"]:focus {
+      outline: 2px solid rgba(255, 255, 255, 0.8);
+      outline-offset: 1px;
+    }
+
+    .hotkey-settings {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 8px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hotkey-settings legend {
+      font-size: 12px;
+      padding: 0 4px;
+      opacity: 0.9;
+    }
+
+    .hotkey-settings kbd,
+    .hotkey-settings code {
+      font-family: inherit;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+
+    .hotkey-actions {
+      justify-content: flex-end;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .btn-inline {
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 6px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 5px 12px;
+      cursor: pointer;
+    }
+
+    .btn-inline:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
     /* 起動ログエリア */
     #startup-logs {
       background: #000;
@@ -414,7 +476,7 @@
       </div>
     </header>
 
-    <p class="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
+    <p class="hotkey-hint" id="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
 
     <div class="chat" id="chat" aria-live="polite">
       <div class="no-result" id="no-result">
@@ -425,9 +487,34 @@
     <details class="advanced">
       <summary>詳細設定・ログ</summary>
       <div class="advanced-body">
-        <p class="advanced-hint">
-          その他のホットキー: Ctrl+Shift+D（詳細説明） / Ctrl+Shift+Q（画面への質問）
-        </p>
+        <fieldset class="hotkey-settings">
+          <legend>ホットキー</legend>
+          <p class="advanced-hint">
+            他のアプリやスクリーンリーダーと重なる場合は変更してください。
+            <kbd>Ctrl</kbd>や<kbd>Shift</kbd>と英数字を <code>+</code> でつないで入力します（例: Ctrl+Shift+G）。
+          </p>
+          <div class="settings-row">
+            <label for="hotkey-capture">画面を説明</label>
+            <input type="text" id="hotkey-capture" data-hotkey="capture" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-prepare">事前キャプチャ</label>
+            <input type="text" id="hotkey-prepare" data-hotkey="prepare" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-detailed">詳しく説明</label>
+            <input type="text" id="hotkey-detailed" data-hotkey="detailed" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-question">画面へ質問</label>
+            <input type="text" id="hotkey-question" data-hotkey="question" spellcheck="false">
+          </div>
+          <div class="settings-row hotkey-actions">
+            <button type="button" id="hotkey-save" class="btn-inline">ホットキーを保存</button>
+            <button type="button" id="hotkey-reset" class="btn-inline">既定に戻す</button>
+          </div>
+          <p id="hotkey-status" class="advanced-hint" role="status" aria-live="polite"></p>
+        </fieldset>
         <div class="settings-row">
           <label for="image-size-select">画像解像度</label>
           <select id="image-size-select">

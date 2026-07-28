@@ -166,7 +166,15 @@ async function maybeShowFirstTimeGuide() {
   appSettings.guideShown = true;
   await window.electronAPI.saveSettings({ guideShown: true });
 
-  const guideText = 'さらに詳しい説明が欲しいときは Ctrl+Shift+D、画面について質問したいときは Ctrl+Shift+Q が使えます。';
+  const keys = currentHotkeys || {};
+  const detailedKey = prettifyAccelerator(keys.detailed) || 'Ctrl+Shift+D';
+  const questionKey = prettifyAccelerator(keys.question) || 'Ctrl+Shift+Q';
+  const prepareKey = prettifyAccelerator(keys.prepare) || 'Ctrl+Shift+P';
+
+  const guideText =
+    `さらに詳しい説明が欲しいときは ${detailedKey}、画面について質問したいときは ${questionKey} が使えます。` +
+    `どちらも直前に読み取った画面について答えます。` +
+    `別の画面に切り替えてから使いたいときは、先に ${prepareKey} でその画面を記録してください。`;
   const msg = createMessage('ai');
   msg.root.classList.add('guide');
   msg.bubble.textContent = `💡 ${guideText}`;
@@ -185,8 +193,23 @@ window.electronAPI.onAnalysisStart((data) => {
   if (data.type === 'detailed') label = '画面を詳しく説明して';
   if (data.type === 'question') label = data.question || '画面への質問';
 
+  // 詳細・質問は撮り直さず、記録済みの画面に対して答える。
+  // どの時点の画面について話しているのかが分かるよう明示する。
+  if ((data.type === 'detailed' || data.type === 'question') && data.imageCapturedAt) {
+    label += `（${formatTime(data.imageCapturedAt)}の画面について）`;
+  }
+
   addUserMessage(label);
   currentAiMsg = addAiMessage();
+});
+
+// 事前キャプチャ（P）: 説明は出さず、記録できたことだけ伝える
+window.electronAPI.onCapturePrepared((data) => {
+  const time = formatTime(data && data.timestamp);
+  const msg = createMessage('ai');
+  msg.root.classList.add('guide');
+  msg.bubble.textContent = `📌 ${time} の画面を記録しました。このあとの「詳しく説明」「質問」は、この画面について答えます。`;
+  finalizeAiMessage(msg, data && data.timestamp);
 });
 
 // 分析結果（ストリーミング）: 現在のAI吹き出しを更新
@@ -398,6 +421,92 @@ window.electronAPI.onLogMessage((text) => {
 // 設定UI
 // ==========================================
 const imageSizeSelect = document.getElementById('image-size-select');
+const hotkeyInputs = Array.from(document.querySelectorAll('[data-hotkey]'));
+const hotkeySaveBtn = document.getElementById('hotkey-save');
+const hotkeyResetBtn = document.getElementById('hotkey-reset');
+const hotkeyStatus = document.getElementById('hotkey-status');
+const hotkeyHint = document.getElementById('hotkey-hint');
+
+const HOTKEY_LABELS = {
+  capture: '画面を説明',
+  prepare: '事前キャプチャ',
+  detailed: '詳しく説明',
+  question: '画面へ質問'
+};
+
+let hotkeyDefaults = {};
+let currentHotkeys = {};
+
+// Electron 内部表記(CommandOrControl)を、画面表示用の見慣れた表記へ
+function prettifyAccelerator(accelerator) {
+  if (!accelerator) return '';
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+  return accelerator.replace(/CommandOrControl/gi, isMac ? 'Cmd' : 'Ctrl');
+}
+
+// 表示用の表記を Electron が解釈できる形へ戻す
+function normalizeAccelerator(text) {
+  return (text || '')
+    .trim()
+    .replace(/\s*\+\s*/g, '+')
+    .replace(/\b(ctrl|control|cmd|command)\b/gi, 'CommandOrControl');
+}
+
+function applyHotkeysToUI(hotkeys) {
+  currentHotkeys = hotkeys || {};
+  hotkeyInputs.forEach(input => {
+    input.value = prettifyAccelerator(hotkeys[input.dataset.hotkey]);
+  });
+  if (hotkeyHint && hotkeys.capture) {
+    hotkeyHint.innerHTML = '';
+    const kbd = document.createElement('kbd');
+    kbd.textContent = prettifyAccelerator(hotkeys.capture);
+    hotkeyHint.appendChild(kbd);
+    hotkeyHint.appendChild(document.createTextNode(' で今の画面を認識して説明します'));
+  }
+}
+
+async function initHotkeys() {
+  if (!hotkeyInputs.length) return;
+  const { hotkeys, defaults } = await window.electronAPI.getHotkeys();
+  hotkeyDefaults = defaults || {};
+  applyHotkeysToUI(hotkeys);
+}
+
+// 保存結果を文章で伝える。登録に失敗したキーは名指しで知らせないと、
+// 画面が見えない利用者には「効かない理由」が分からない
+function reportHotkeyResults(results) {
+  const failed = Object.entries(results || {})
+    .filter(([, r]) => !r.ok)
+    .map(([name, r]) => `${HOTKEY_LABELS[name] || name}（${prettifyAccelerator(r.accelerator)}）`);
+
+  const message = failed.length === 0
+    ? 'ホットキーを保存しました。すべて登録できています。'
+    : `ホットキーを保存しました。ただし ${failed.join('、')} は他のアプリが使用中で登録できませんでした。別のキーに変更してください。`;
+
+  if (hotkeyStatus) hotkeyStatus.textContent = message;
+  window.electronAPI.speak(message).catch(() => {});
+}
+
+async function saveHotkeys(values) {
+  const { hotkeys, results } = await window.electronAPI.saveHotkeys(values);
+  applyHotkeysToUI(hotkeys);
+  reportHotkeyResults(results);
+}
+
+if (hotkeySaveBtn) {
+  hotkeySaveBtn.addEventListener('click', () => {
+    const values = {};
+    hotkeyInputs.forEach(input => {
+      values[input.dataset.hotkey] = normalizeAccelerator(input.value);
+    });
+    saveHotkeys(values);
+  });
+}
+
+if (hotkeyResetBtn) {
+  hotkeyResetBtn.addEventListener('click', () => saveHotkeys({ ...hotkeyDefaults }));
+}
 
 async function initSettings() {
   appSettings = await window.electronAPI.getSettings();
@@ -425,6 +534,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // 設定を読み込み
   initSettings();
+  initHotkeys();
 
   // 2秒ごとにシステムステータスをチェック
   statusCheckInterval = setInterval(checkSystemStatus, 2000);

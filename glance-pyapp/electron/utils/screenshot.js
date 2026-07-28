@@ -1,4 +1,4 @@
-import { desktopCapturer } from 'electron';
+import { desktopCapturer, screen } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
@@ -7,40 +7,73 @@ import path from 'path';
  */
 
 /**
+ * 「使用者が今見ている」ディスプレイを決める
+ *
+ * マウスカーソルのある画面を採用する。以前は desktopCapturer が返した
+ * sources[0] を無条件に使っていたが、この並び順はプライマリディスプレイである
+ * 保証がなく、マルチモニタ環境では「見ている画面と別のディスプレイを撮る」
+ * 原因になっていた。
+ *
+ * @returns {Electron.Display}
+ */
+function getActiveDisplay() {
+  try {
+    return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  } catch (error) {
+    console.warn('⚠️ カーソル位置の取得に失敗、プライマリディスプレイを使用します:', error.message);
+    return screen.getPrimaryDisplay();
+  }
+}
+
+/**
  * 全画面スクリーンショットを取得する
- * @returns {Promise<string>} Base64エンコードされた画像データ
+ * @returns {Promise<string>} Base64エンコードされた画像データ（PNG）
  */
 export async function captureFullScreen() {
   console.log('📸 画面キャプチャを開始...');
-  
+
   try {
-    // 利用可能な画面ソースを取得
+    const display = getActiveDisplay();
+
+    // サムネイルサイズは対象ディスプレイの実ピクセル数に合わせる。
+    // 1920x1080 固定だと高DPI機や4K・縦向きモニタで解像度が落ち、
+    // 小さな文字がモデルから読めなくなる。
+    const scale = display.scaleFactor || 1;
+    const thumbnailSize = {
+      width: Math.round(display.size.width * scale),
+      height: Math.round(display.size.height * scale)
+    };
+
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: {
-        width: 1920,
-        height: 1080
-      }
+      thumbnailSize
     });
 
     if (sources.length === 0) {
       throw new Error('画面ソースが見つかりません');
     }
 
-    // 最初の画面（プライマリディスプレイ）を使用
-    const primarySource = sources[0];
-    const thumbnail = primarySource.thumbnail;
+    // カーソルのあるディスプレイに対応するソースを選ぶ。
+    // display_id が取れない環境（古いWindows等）ではソース順にフォールバック。
+    const targetSource =
+      sources.find(source => source.display_id === String(display.id)) || sources[0];
 
-    // PNG形式でエンコード
-    const image = thumbnail.toPNG();
-    
-    // Base64に変換
-    const base64Image = image.toString('base64');
-    
-    console.log(`✅ 画面キャプチャ完了 (サイズ: ${(base64Image.length / 1024).toFixed(2)} KB)`);
-    
+    if (targetSource.display_id !== String(display.id)) {
+      console.warn(
+        `⚠️ display_id が一致するソースがないため先頭を使用します ` +
+        `(期待: ${display.id} / 取得: ${sources.map(s => s.display_id).join(',')})`
+      );
+    }
+
+    const base64Image = targetSource.thumbnail.toPNG().toString('base64');
+
+    console.log(
+      `✅ 画面キャプチャ完了 (display=${display.id} ${thumbnailSize.width}x${thumbnailSize.height}, ` +
+      `${(base64Image.length / 1024).toFixed(0)} KB)`
+    );
+
     return base64Image;
-    
+
   } catch (error) {
     console.error('❌ 画面キャプチャに失敗しました:', error);
     throw error;

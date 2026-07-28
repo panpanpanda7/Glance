@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import yaml
 import base64
+import json
 from PIL import Image
 import io
 import os
@@ -54,11 +55,6 @@ _result_cache = OrderedDict()
 _RESULT_CACHE_MAX = 16
 
 
-def _cache_key(image_bytes, prompt_type, question):
-    h = hashlib.sha256(image_bytes).hexdigest()
-    return f"{h}:{prompt_type}:{question or ''}"
-
-
 def _cache_get(key):
     if key in _result_cache:
         _result_cache.move_to_end(key)
@@ -71,6 +67,128 @@ def _cache_put(key, value):
     _result_cache.move_to_end(key)
     while len(_result_cache) > _RESULT_CACHE_MAX:
         _result_cache.popitem(last=False)
+
+
+# ==========================================
+# 画像ストア（imageId 参照方式）
+#
+# 目的は2つ:
+#  1. G / P で撮った1枚を D / Q が「そのまま」使えるようにする。
+#     撮り直すと PNG のバイト列が変わり、llama-server が別画像と判定して
+#     画像エンコード（低スペックCPUでは数秒）からやり直しになる。
+#  2. Electron から毎回 1MB 弱の Base64 を送る無駄をなくす。
+#     2回目以降は imageId（64文字）だけを送れば済む。
+#
+# リサイズ済みBase64も併せてキャッシュする。同一画面・同一解像度設定なら
+# 必ず同一の文字列が llama-server へ渡り、KVキャッシュが確実に再利用される。
+# ==========================================
+_image_store = OrderedDict()
+_IMAGE_STORE_MAX = 6
+_image_store_lock = threading.Lock()
+
+
+class ImageNotAvailable(Exception):
+    """imageId が期限切れ／未登録で、画像を復元できない"""
+    pass
+
+
+def _store_image(image_id, image_bytes):
+    """画像を登録して entry を返す（既存なら再利用してLRUを更新）"""
+    with _image_store_lock:
+        entry = _image_store.get(image_id)
+        if entry is None:
+            entry = {"bytes": image_bytes, "encoded": {}}
+            _image_store[image_id] = entry
+        _image_store.move_to_end(image_id)
+        while len(_image_store) > _IMAGE_STORE_MAX:
+            _image_store.popitem(last=False)
+    return entry
+
+
+def _encoded_for(entry, image_max_size):
+    """
+    リサイズ済みBase64を返す（未生成なら1回だけ生成してキャッシュ）
+
+    レガシーモデル（encode_image 未実装）では None を返し、
+    呼び出し側は従来どおり PIL Image を渡す。
+    """
+    if current_model is None or not hasattr(current_model, 'encode_image'):
+        return None
+    key = str(image_max_size)
+    cached = entry["encoded"].get(key)
+    if cached:
+        return cached
+    image = Image.open(io.BytesIO(entry["bytes"]))
+    encoded = current_model.encode_image(image, max_size=image_max_size)
+    entry["encoded"][key] = encoded
+    return encoded
+
+
+def _resolve_request_image(data):
+    """
+    リクエストから画像を解決する
+
+    - image(Base64) 付き … 初回登録（G / P）。imageId 未指定なら SHA-256 から採番
+    - imageId のみ    … 登録済みを引く（D / Q）
+
+    Returns:
+        (image_id, entry)
+
+    Raises:
+        ImageNotAvailable: imageId が失効している（Electron 側で画像を再送させる）
+        ValueError: 画像が不正
+    """
+    image_base64 = data.get('image')
+    image_id = data.get('imageId')
+
+    if image_base64:
+        image_bytes = base64.b64decode(image_base64)
+        if not image_id:
+            image_id = hashlib.sha256(image_bytes).hexdigest()
+        # 壊れた画像をストアに入れないよう、ここで一度デコードを検証する
+        Image.open(io.BytesIO(image_bytes)).verify()
+        return image_id, _store_image(image_id, image_bytes)
+
+    if not image_id:
+        raise ValueError('画像データも imageId もありません')
+
+    with _image_store_lock:
+        entry = _image_store.get(image_id)
+        if entry is not None:
+            _image_store.move_to_end(image_id)
+    if entry is None:
+        raise ImageNotAvailable(image_id)
+    return image_id, entry
+
+
+def _select_prompt(prompt_type, question):
+    """プロンプト種別に応じた単段プロンプトと maxTokens を返す"""
+    if prompt_type == 'detailed':
+        return config['prompt']['single_pass_detailed'], config['prompt']['maxTokens']['detailed']
+    if prompt_type == 'question':
+        return (config['prompt']['questionPrompt'].format(question=question or ''),
+                config['prompt']['maxTokens']['question'])
+    return config['prompt']['single_pass_summary'], config['prompt']['maxTokens']['summary']
+
+
+def _resolve_image_max_size(raw):
+    """imageMaxSize 設定値を実際の値へ（'none'=リサイズなし / 'default'=モデル既定）"""
+    if raw == 'none':
+        return None
+    if raw == 'default' or raw is None:
+        return IMAGE_MAX_SIZE_DEFAULT
+    return int(raw)
+
+
+def _sse(payload: dict) -> str:
+    """
+    SSE の1フレームを組み立てる
+
+    ★本文をそのまま "data: {text}" に埋めてはいけない。モデル出力に改行が
+    含まれるとフレーム境界がずれ、後続チャンクが受信側で捨てられる
+    （「説明が途中で消える」の原因）。JSONに包んで改行を無害化する。
+    """
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 # アプリの状態管理
 app_state = {
@@ -510,35 +628,21 @@ def analyze():
                 'error': 'リクエストボディが空です'
             }), 400
         
-        image_base64 = data.get('image')
-        if not image_base64:
-            return jsonify({
-                'success': False,
-                'error': '画像データがありません'
-            }), 400
-        
+        # 画像の解決（imageId 参照 or 初回登録）
+        try:
+            image_id, entry = _resolve_request_image(data)
+        except ImageNotAvailable:
+            return jsonify({'success': False, 'error': 'unknown_image'}), 409
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'画像のデコードに失敗: {str(e)}'}), 400
+
         # プロンプトタイプを取得（デフォルトは 'standard'）
         prompt_type = data.get('promptType', 'standard')
-
-        # プロンプトタイプに応じて単段プロンプトとmaxTokensを選択。
-        # question は画像+質問を直接渡す（旧2段階は質問文だけがモデルに渡り
-        # 画面情報ゼロで回答するバグがあった）。
-        if prompt_type == 'detailed':
-            prompt = config['prompt']['single_pass_detailed']
-            default_max_tokens = config['prompt']['maxTokens']['detailed']
-        elif prompt_type == 'question':
-            question_text = data.get('question', '')
-            prompt = config['prompt']['questionPrompt'].format(question=question_text)
-            default_max_tokens = config['prompt']['maxTokens']['question']
-        else:
-            prompt = config['prompt']['single_pass_summary']
-            default_max_tokens = config['prompt']['maxTokens']['summary']
+        question_text = data.get('question', '')
+        prompt, default_max_tokens = _select_prompt(prompt_type, question_text)
 
         # 画像解像度設定（リクエストから取得、未指定はモデルデフォルトを使用）
-        image_max_size_raw = data.get('imageMaxSize', 'default')
-        image_max_size = None if image_max_size_raw == 'none' else (
-            int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
-        )
+        image_max_size = _resolve_image_max_size(data.get('imageMaxSize', 'default'))
 
         # 生成パラメータ（repetition_penalty はレガシーモデルのみで有効）
         gen_options = {
@@ -549,19 +653,8 @@ def analyze():
         }
 
         print(f"\n📸 【単段分析】リクエスト受信")
-        print(f"   プロンプトタイプ: {prompt_type}")
-        
-        # Base64をPIL Imageに変換
-        try:
-            image_bytes = base64.b64decode(image_base64)
-            image = Image.open(io.BytesIO(image_bytes))
-            print(f"   画像解像度: {image.size}")
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': f'画像のデコードに失敗: {str(e)}'
-            }), 400
-        
+        print(f"   プロンプトタイプ: {prompt_type} / imageId={image_id[:12]}…")
+
         # モデルロード確認
         if current_model is None or not current_model.is_loaded:
             return jsonify({
@@ -569,8 +662,11 @@ def analyze():
                 'error': 'モデルがロードされていません'
             }), 500
 
+        encoded_image = _encoded_for(entry, image_max_size)
+        image = None if encoded_image else Image.open(io.BytesIO(entry["bytes"]))
+
         # 無変化スキップ：同一画像＋同一プロンプトならキャッシュ即返し（推論回避）
-        cache_key = _cache_key(image_bytes, prompt_type, data.get('question', ''))
+        cache_key = f"{image_id}:{prompt_type}:{question_text or ''}"
         cached = _cache_get(cache_key)
         if cached is not None:
             print("♻️ 同一画像+プロンプト：キャッシュ結果を返却（推論スキップ）")
@@ -584,7 +680,8 @@ def analyze():
         # 【単段】画像から直接生成。中間JSONを経由しないため高速で、
         # 画像に直接根ざすため情報欠落も防ぐ。
         final_result = current_model.inference(
-            image, prompt, image_max_size=image_max_size, **gen_options
+            image, prompt, image_max_size=image_max_size,
+            encoded_image=encoded_image, **gen_options
         )
 
         # キャッシュに保存（次回同一画像+プロンプトで即返し）
@@ -675,6 +772,76 @@ def get_models():
     })
 
 
+@app.route('/prepare', methods=['POST'])
+def prepare():
+    """
+    事前キャプチャ（Ctrl+Shift+P）用エンドポイント
+
+    出力は行わない。この時点ではユーザーが待っていないので、後続の
+    D / Q で効いてくる重い処理をここで先に済ませておく:
+
+      1. 画像を imageId で登録（以降 D / Q は ID だけ送れば済む）
+      2. リサイズ + PNG エンコードを実施してキャッシュ
+      3. llama-server へ「system + 画像 + 共通プレフィックス」を投げ、
+         生成させずに KV キャッシュへ焼き込む（prewarm）
+
+    実測（Qwen3-VL-4B / Metal / 896px）:
+      D の TTFT 3.83s → 1.61s (-58%) 、Q の TTFT 2.78s → 0.58s (-79%)
+
+    Request Body:
+        {"image": "base64", "imageId": "省略可", "imageMaxSize": "896"}
+    """
+    try:
+        data = request.json or {}
+
+        try:
+            image_id, entry = _resolve_request_image(data)
+        except ImageNotAvailable:
+            return jsonify({'success': False, 'error': 'unknown_image'}), 409
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'画像のデコードに失敗: {e}'}), 400
+
+        if current_model is None or not current_model.is_loaded:
+            # 画像の登録だけは済んでいるので、モデル準備後の D / Q は成立する
+            return jsonify({'success': True, 'imageId': image_id, 'prewarmed': False,
+                            'detail': 'モデル未ロードのため事前warmはスキップ'})
+
+        image_max_size = _resolve_image_max_size(data.get('imageMaxSize', 'default'))
+        print(f"\n📌 【事前キャプチャ】受信 imageId={image_id[:12]}…")
+
+        # エンコードは同期で済ませる（数百ms。ここで確定させると D / Q が
+        # 必ず同一バイト列を使うことになり、KVキャッシュのヒットが保証される）
+        encoded = _encoded_for(entry, image_max_size)
+
+        prewarm_prefix = config['prompt'].get('prewarm_prefix')
+        if not prewarm_prefix or not hasattr(current_model, 'prewarm'):
+            return jsonify({'success': True, 'imageId': image_id, 'prewarmed': False})
+
+        def do_prewarm():
+            """
+            prefill はモデル任せで数秒かかるため別スレッドで実行し、
+            Electron へは即座に応答を返す（キャプチャ音や確認表示を待たせない）。
+            llama-server は -np 1 なので、途中で D / Q が来ても取りこぼさず
+            順番に処理され、後続はキャッシュが温まった状態で走る。
+            """
+            try:
+                current_model.prewarm(None, prewarm_prefix,
+                                      encoded_image=encoded,
+                                      image_max_size=image_max_size)
+            except Exception as e:
+                print(f"⚠️ 事前warmに失敗（本処理には影響しません）: {e}")
+
+        threading.Thread(target=do_prewarm, daemon=True).start()
+
+        return jsonify({'success': True, 'imageId': image_id, 'prewarmed': True})
+
+    except Exception as e:
+        print(f"❌ 事前キャプチャでエラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/analyze-stream', methods=['POST'])
 def analyze_stream():
     """
@@ -686,54 +853,42 @@ def analyze_stream():
 
     Request Body:
         {
-            "image": "base64_encoded_image",
+            "imageId": "G/P で登録済みの画像ID（D / Q はこれだけ送ればよい）",
+            "image": "base64_encoded_image（初回のみ。imageId 未登録時の再送用）",
             "promptType": "standard" | "detailed" | "question",
             "question": "質問文（promptType='question'の場合）"
         }
 
     Response:
         Server-Sent Events (text/event-stream)
-        各チャンクは "data: {text}" 形式で送信
+        各フレームは JSON: {"t": "差分テキスト"} / {"done": true} / {"error": "..."}
     """
     try:
         # リクエストデータを取得
         data = request.json
-        
+
         if not data:
             return jsonify({
                 'success': False,
                 'error': 'リクエストボディが空です'
             }), 400
-        
-        image_base64 = data.get('image')
-        if not image_base64:
-            return jsonify({
-                'success': False,
-                'error': '画像データがありません'
-            }), 400
-        
+
+        # 画像の解決（imageId 参照 or 初回登録）
+        try:
+            image_id, entry = _resolve_request_image(data)
+        except ImageNotAvailable:
+            # 画像が期限切れ。Electron 側は Base64 付きで再送する
+            return jsonify({'success': False, 'error': 'unknown_image'}), 409
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'画像のデコードに失敗: {str(e)}'}), 400
+
         # プロンプトタイプを取得
         prompt_type = data.get('promptType', 'standard')
-
-        # プロンプトタイプに応じて単段プロンプトとmaxTokensを選択。
-        # question は画像+質問を直接渡す（旧2段階は質問文だけがモデルに渡り
-        # 画面情報ゼロで回答するバグがあった）。
-        if prompt_type == 'detailed':
-            prompt = config['prompt']['single_pass_detailed']
-            default_max_tokens = config['prompt']['maxTokens']['detailed']
-        elif prompt_type == 'question':
-            question_text = data.get('question', '')
-            prompt = config['prompt']['questionPrompt'].format(question=question_text)
-            default_max_tokens = config['prompt']['maxTokens']['question']
-        else:
-            prompt = config['prompt']['single_pass_summary']
-            default_max_tokens = config['prompt']['maxTokens']['summary']
+        question_text = data.get('question', '')
+        prompt, default_max_tokens = _select_prompt(prompt_type, question_text)
 
         # 画像解像度設定
-        image_max_size_raw = data.get('imageMaxSize', 'default')
-        image_max_size = None if image_max_size_raw == 'none' else (
-            int(image_max_size_raw) if image_max_size_raw != 'default' else IMAGE_MAX_SIZE_DEFAULT
-        )
+        image_max_size = _resolve_image_max_size(data.get('imageMaxSize', 'default'))
 
         # 生成パラメータ（repetition_penalty はレガシーモデルのみで有効）
         gen_options = {
@@ -744,28 +899,23 @@ def analyze_stream():
         }
 
         print(f"\n📸 【単段ストリーミング分析】リクエスト受信")
-        print(f"   プロンプトタイプ: {prompt_type}")
-        
-        # Base64をPIL Imageに変換
-        try:
-            image_bytes = base64.b64decode(image_base64)
-            image = Image.open(io.BytesIO(image_bytes))
-            print(f"   画像解像度: {image.size}")
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': f'画像のデコードに失敗: {str(e)}'
-            }), 400
-        
+        print(f"   プロンプトタイプ: {prompt_type} / imageId={image_id[:12]}…"
+              f"{'（画像は再利用）' if not data.get('image') else '（画像を新規受信）'}")
+
         # モデルチェック
         if current_model is None or not current_model.is_loaded:
             return jsonify({
                 'success': False,
                 'error': 'モデルがロードされていません'
             }), 500
-        
+
+        # G / P で確定済みのBase64をそのまま使う。撮り直さない限り必ず同一の
+        # 文字列になるため、llama-server 側の画像プレフィックスが再利用される。
+        encoded_image = _encoded_for(entry, image_max_size)
+        image = None if encoded_image else Image.open(io.BytesIO(entry["bytes"]))
+
         # 無変化スキップ：同一画像＋同一プロンプトのキャッシュ判定
-        cache_key = _cache_key(image_bytes, prompt_type, data.get('question', ''))
+        cache_key = f"{image_id}:{prompt_type}:{question_text or ''}"
 
         def generate():
             """ストリーミングジェネレーター"""
@@ -777,8 +927,8 @@ def analyze_stream():
             cached = _cache_get(cache_key)
             if cached is not None:
                 print("♻️ 同一画像+プロンプト：キャッシュ結果を返却（推論スキップ）")
-                yield f"data: {cached}\n\n"
-                yield f"data: [DONE]\n\n"
+                yield _sse({"t": cached})
+                yield _sse({"done": True})
                 return
 
             collected = []
@@ -787,7 +937,8 @@ def analyze_stream():
                 # 第1段階を挟まないため、第一声までの待ち時間が大幅に短い
                 print(f"   🔄 単段（{prompt_type}）実行中...")
                 stream_iter = current_model.inference_stream(
-                    image, prompt, image_max_size=image_max_size, **gen_options
+                    image, prompt, image_max_size=image_max_size,
+                    encoded_image=encoded_image, **gen_options
                 )
 
                 # ストリーミング出力
@@ -797,28 +948,29 @@ def analyze_stream():
 
                     token_count += 1
                     collected.append(chunk)
-                    yield f"data: {chunk}\n\n"
+                    yield _sse({"t": chunk})
 
                 # 全文をキャッシュ（次回同一画像+プロンプトで即返し）
                 if collected:
                     _cache_put(cache_key, "".join(collected).strip())
-                
+
                 # 性能統計を出力
                 total_time = time.time() - start_time
                 tps = token_count / total_time if total_time > 0 else 0
                 
                 print(f"✅ 【単段ストリーミング分析】完了")
-                print(f"   📊 TTFT (初動時間): {first_token_time:.2f}s")
+                if first_token_time is not None:
+                    print(f"   📊 TTFT (初動時間): {first_token_time:.2f}s")
                 print(f"   📊 TPS (トークン/秒): {tps:.2f}")
                 print(f"   📊 総時間: {total_time:.2f}s")
-                
-                yield f"data: [DONE]\n\n"
-                
+
+                yield _sse({"done": True})
+
             except Exception as e:
                 print(f"❌ ストリーミングエラー: {e}")
                 import traceback
                 traceback.print_exc()
-                yield f"data: [ERROR] {str(e)}\n\n"
+                yield _sse({"error": str(e)})
         
         return Response(
             stream_with_context(generate()),
