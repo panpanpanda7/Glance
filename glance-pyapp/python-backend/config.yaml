@@ -111,9 +111,18 @@ models:
     accel: auto
     mlock: false
     # Qwen3.5は既定が思考モード。無効化しないと出力が思考に消費され本文が空になる
+    # repeat_penalty は 2B 専用に強める。実測(資料画面/detailed/640tok上限):
+    #   1.05 … 同じ節を約40回繰り返して上限に到達（ループ）
+    #   1.10 … ループなし・462tok（まだ冗長）
+    #   1.15 … ループなし・164tok で自然完結  ← 採用
+    #   1.20 … ループなし・194tok
+    # 4B は 1.05 で5画像ともループしないため、全体の既定は上げていない。
+    # ここは _sampling_params の後に payload へマージされるので上書きになる。
     extra_chat_payload:
       chat_template_kwargs:
         enable_thinking: false
+      repeat_penalty: 1.15
+      repeat_last_n: 256
     cpu:
       threads: null
       cpu_range: null
@@ -408,9 +417,12 @@ prompt:
   # 「途中で切らないための上限」であり目標値ではない。EOSで自然に止まるので
   # 通常時の生成時間は変わらない（実測: G は v4 プロンプトで 120〜145tok に収束）。
   # 暴走は上限ではなくループ検知で止める。
+  # 実測した自然完結の長さ（5画像、finish_reason=stop になるまで）:
+  #   4B: G 80〜145tok / D 190〜290tok
+  #   2B: G 80〜329tok / D 131〜341tok  ← 2Bの方が冗長なのでこちらに合わせる
   maxTokens:
-    summary: 256       # 単段Ctrl+Shift+G: 2〜4文。資料の要約で143tok出た実測に対する余裕
-    detailed: 640      # 単段Ctrl+Shift+D: 5〜7文。実測は220〜290tokで、長い画面でも切れない値
+    summary: 384       # 単段Ctrl+Shift+G。2Bの最長329tokに対する余裕
+    detailed: 640      # 単段Ctrl+Shift+D。2Bの最長341tokに対して十分
     question: 384      # 質問回答。回答の長さは質問しだいなので広めに取る
 
 # サーバー設定

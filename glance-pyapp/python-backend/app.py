@@ -198,9 +198,9 @@ _LOOP_MAX_UNIT = 80
 _LOOP_REPEATS = 3        # 同じ断片が連続3回で暴走とみなす
 
 
-def _looks_looping(text: str) -> bool:
+def _find_loop_unit(text: str):
     """
-    末尾が同じ断片の繰り返しになっていないか判定する
+    末尾で繰り返されている断片の長さを返す（繰り返しが無ければ None）
 
     「〜します。〜します。〜します。」のように、一定長の断片が連続して
     3回現れたらループとみなす。判定は末尾 _LOOP_WINDOW 文字だけを見るため、
@@ -212,8 +212,30 @@ def _looks_looping(text: str) -> bool:
         if not chunk.strip():
             continue
         if all(tail[-unit * (i + 1):-unit * i or None] == chunk for i in range(1, _LOOP_REPEATS)):
-            return True
-    return False
+            return unit
+    return None
+
+
+def _looks_looping(text: str) -> bool:
+    """末尾が同じ断片の繰り返しになっていないか"""
+    return _find_loop_unit(text) is not None
+
+
+def _strip_repeated_tail(text: str) -> str:
+    """
+    末尾で繰り返されている断片を取り除く
+
+    ループを検知して打ち切っても、検知までに出た繰り返しがそのまま残る。
+    読み上げでは同じ文言が何度も流れることになり、耳障りなだけでなく
+    「どこまでが本当の説明か」が分からなくなるため、末尾から削り落とす。
+    """
+    unit = _find_loop_unit(text)
+    if not unit:
+        return text
+    chunk = text[-unit:]
+    while text.endswith(chunk):
+        text = text[:-unit]
+    return text
 
 
 def _trim_incomplete_tail(text: str) -> str:
@@ -1025,6 +1047,9 @@ def analyze_stream():
 
                 final_text = current_model._clean_output("".join(collected)) \
                     if hasattr(current_model, "_clean_output") else "".join(collected).strip()
+                if stopped_by == "loop":
+                    # 検知までに出てしまった繰り返しを削ってから文を整える
+                    final_text = _strip_repeated_tail(final_text)
                 if stopped_by:
                     final_text = _trim_incomplete_tail(final_text)
 
