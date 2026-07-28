@@ -27,22 +27,37 @@ function getActiveDisplay() {
 
 /**
  * 全画面スクリーンショットを取得する
+ *
+ * @param {Object} [options]
+ * @param {number} [options.maxLongEdge] 長辺の上限ピクセル数。
+ *   バックエンドが縮小する解像度の2倍を渡すと、縮小時の品質を保ったまま
+ *   キャプチャの所要時間と転送量を抑えられる（実測: 2940px で 330ms / 2.7MB、
+ *   1792px なら約40%に減る）。省略時はディスプレイの実ピクセル数。
  * @returns {Promise<string>} Base64エンコードされた画像データ（PNG）
  */
-export async function captureFullScreen() {
+export async function captureFullScreen(options = {}) {
   console.log('📸 画面キャプチャを開始...');
 
   try {
     const display = getActiveDisplay();
 
-    // サムネイルサイズは対象ディスプレイの実ピクセル数に合わせる。
+    // サムネイルサイズは対象ディスプレイの実ピクセル数を基準にする。
     // 1920x1080 固定だと高DPI機や4K・縦向きモニタで解像度が落ち、
     // 小さな文字がモデルから読めなくなる。
     const scale = display.scaleFactor || 1;
-    const thumbnailSize = {
-      width: Math.round(display.size.width * scale),
-      height: Math.round(display.size.height * scale)
-    };
+    let width = Math.round(display.size.width * scale);
+    let height = Math.round(display.size.height * scale);
+
+    // 縮小先より極端に大きく撮っても品質は上がらず、PNGエンコードと
+    // 転送の時間だけが増える。長辺の上限で頭打ちにする（縦横比は維持）
+    const limit = options.maxLongEdge;
+    if (limit && Math.max(width, height) > limit) {
+      const ratio = limit / Math.max(width, height);
+      width = Math.round(width * ratio);
+      height = Math.round(height * ratio);
+    }
+
+    const thumbnailSize = { width, height };
 
     const sources = await desktopCapturer.getSources({
       types: ['screen'],

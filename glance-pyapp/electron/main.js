@@ -131,6 +131,23 @@ async function streamAnalyze(body, resultMeta) {
 }
 
 /**
+ * キャプチャする長辺の上限を決める
+ *
+ * バックエンドは imageMaxSize（既定896px）まで縮小してからモデルへ渡すため、
+ * その2倍より大きく撮っても認識精度は上がらず、PNGエンコードと転送の時間
+ * だけが増える（実測: 2940px で 330ms / 2.7MB）。2倍あれば縮小時の品質は
+ * 十分に保たれる。「原寸」設定のときだけ上限を外す。
+ *
+ * @returns {number|undefined} 長辺の上限。undefined ならディスプレイの実ピクセル数
+ */
+function getCaptureLongEdge() {
+  const setting = appSettings.imageMaxSize;
+  if (setting === 'none') return undefined;
+  const target = parseInt(setting, 10);
+  return Number.isFinite(target) ? target * 2 : 1792;
+}
+
+/**
  * 画面をキャプチャして currentImage を更新する
  *
  * 画像IDは Base64 の SHA-256。バックエンドと同じ値になるため、以降は
@@ -139,7 +156,7 @@ async function streamAnalyze(body, resultMeta) {
  * @returns {Promise<object>} currentImage
  */
 async function captureAndStore() {
-  const base64 = await captureFullScreen();
+  const base64 = await captureFullScreen({ maxLongEdge: getCaptureLongEdge() });
   const id = crypto.createHash('sha256').update(Buffer.from(base64, 'base64')).digest('hex');
   currentImage = { id, base64, capturedAt: Date.now(), registered: false };
   return currentImage;
@@ -458,6 +475,16 @@ function createWindow() {
   } catch (error) {
     console.warn('⚠️ キャプチャ除外を設定できませんでした:', error.message);
   }
+
+  // 画面側で起きたエラーをログへ流す。開発者ツールを開けない利用者の環境で
+  // 不具合が起きたとき、report-bug に情報が残らないと原因を追えないため。
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level < 2) return;  // 0=verbose, 1=info は拾わない
+    const where = sourceId ? `${path.basename(sourceId)}:${line}` : '画面';
+    const text = `[RENDERER] ${where} ${message}`;
+    console.error(text);
+    if (mainWindow) mainWindow.webContents.send('log-message', text);
+  });
 
   if (process.argv.includes('--debug')) {
     mainWindow.webContents.openDevTools();
