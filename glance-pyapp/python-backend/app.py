@@ -504,6 +504,13 @@ def initialize_system():
             except Exception as e:
                 print(f"   ⚠️ バックエンド判定エラー（既定で継続）: {e}")
 
+            # システムプロンプトを config から適用する。
+            # 画像より前の固定プレフィックスなので llama.cpp が再利用でき、
+            # 共通の指示をここへ置くほど prefill が減る（実測: G -29% / D -59%）
+            system_prompt = config['prompt'].get('system')
+            if system_prompt:
+                current_model.system_prompt = system_prompt.strip()
+
             print("   🔄 llama-server に接続・起動中...")
             try:
                 current_model.load()

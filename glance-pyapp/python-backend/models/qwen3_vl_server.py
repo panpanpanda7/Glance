@@ -92,7 +92,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
         
-        # システムプロンプト（簡潔化）
+        # システムプロンプト。app.py が config.yaml の prompt.system で上書きする。
+        #
+        # ここは画像より前に置かれる固定プレフィックスなので、llama.cpp が
+        # 毎リクエスト KV キャッシュから再利用する。G/D/Q で共通の指示は
+        # ユーザープロンプト側（画像より後ろ＝毎回 prefill され直す）ではなく
+        # ここへ置くほど速い。
         self.system_prompt = """視覚障害者向け画面説明アシスタントです。見えている内容のみを、日本語で説明してください。"""
     
     def _find_server_binary(self) -> Optional[str]:
