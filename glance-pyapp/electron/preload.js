@@ -60,7 +60,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('log-message', (_event, text) => callback(text));
   },
 
+  // 事前キャプチャ（P）の完了通知
+  onCapturePrepared: (callback) => {
+    ipcRenderer.on('capture-prepared', (_event, data) => callback(data));
+  },
+
   // 設定
   getSettings: () => ipcRenderer.invoke('get-settings'),
-  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings)
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+
+  // ホットキー設定
+  getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),
+  saveHotkeys: (hotkeys) => ipcRenderer.invoke('save-hotkeys', hotkeys)
 });

@@ -92,7 +92,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.server_process = None
         self.started_server_by_self = False  # 自前起動したかどうか
         
-        # システムプロンプト（簡潔化）
+        # システムプロンプト。app.py が config.yaml の prompt.system で上書きする。
+        #
+        # ここは画像より前に置かれる固定プレフィックスなので、llama.cpp が
+        # 毎リクエスト KV キャッシュから再利用する。G/D/Q で共通の指示は
+        # ユーザープロンプト側（画像より後ろ＝毎回 prefill され直す）ではなく
+        # ここへ置くほど速い。
         self.system_prompt = """視覚障害者向け画面説明アシスタントです。見えている内容のみを、日本語で説明してください。"""
     
     def _find_server_binary(self) -> Optional[str]:
@@ -352,6 +357,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "-ctk", "q8_0",
                 "-ctv", "q8_0",
                 "-t", str(n_threads),
+                # スロットを1本に固定する。既定(auto)では4スロットになり、
+                # 事前warm(Ctrl+Shift+P)と実リクエストが並走したときに別スロットへ
+                # 振られて画像プレフィックスの再利用が外れる。1本なら後続は必ず
+                # 直前のプロンプトを保持したスロットに入り、KVキャッシュが確実に効く。
+                # （逐次実行時の速度は 1/4 スロットで実測差なしを確認済み）
+                "-np", "1",
             ]
             # GPUオフロード層数（backend_selector の判定結果。None なら付与しない）
             if self.n_gpu_layers is not None:
@@ -609,6 +620,17 @@ class Qwen3VLServerModel(VisionLanguageModel):
         self.is_loaded = True
         print(f"✅ llama-server への接続が確立されました")
     
+    def encode_image(self, image: Image.Image, max_size: int | None = IMAGE_MAX_SIZE) -> str:
+        """
+        画像をリクエスト送信用のBase64にエンコードする（公開API）
+
+        呼び出し側（app.py）が結果をキャッシュし、同じ画面に対する
+        G / P / D / Q へ同一の文字列を渡すことで、llama-server 側の
+        画像チャンクのハッシュが一致し KV キャッシュが確実に再利用される。
+        リサイズ + PNG 再エンコードのCPUコストも1回で済む。
+        """
+        return self._encode_image_to_base64(image, max_size=max_size)
+
     def _encode_image_to_base64(self, image: Image.Image, max_size: int | None = IMAGE_MAX_SIZE) -> str:
         """PIL画像をBase64にエンコード（28pxグリッド整合つき）"""
         w, h = image.size
@@ -629,6 +651,110 @@ class Qwen3VLServerModel(VisionLanguageModel):
         image.save(buffer, format='PNG')
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
     
+    def _sampling_params(self, kwargs: dict) -> dict:
+        """
+        繰り返し抑止のサンプラ設定を組み立てる
+
+        これまで llama-server へは max_tokens / temperature / top_p しか
+        渡しておらず、ペナルティが一切効いていなかった。そのため
+        「max_tokens を低く抑えること」だけがループの唯一の歯止めになり、
+        尻切れとループがトレードオフになっていた。
+
+        ペナルティは logit を補正するため temperature=0（貪欲デコード）でも
+        効く。処理コストは直近 repeat_last_n トークンの走査だけで、
+        4B モデルの1回の順伝播に比べれば無視できる。
+
+        値を上げすぎると助詞や繰り返し出現する数値まで避けて不自然になるため、
+        既定は控えめ。実際の暴走はここではなく app.py のループ検知で止める。
+        """
+        params = {}
+        repeat_penalty = kwargs.get('repeat_penalty')
+        if repeat_penalty:
+            params['repeat_penalty'] = repeat_penalty
+        repeat_last_n = kwargs.get('repeat_last_n')
+        if repeat_last_n:
+            params['repeat_last_n'] = repeat_last_n
+        return params
+
+    def _resolve_image_b64(self, image: Optional[Image.Image], kwargs: dict) -> str:
+        """
+        送信する画像Base64を決める。encoded_image が渡されていればそれを使う。
+
+        ★同一画面に対する G / P / D / Q で必ず同じ文字列になることが重要。
+        画像バイト列が1バイトでも違うと llama-server 側で別画像と判定され、
+        画像エンコード（低スペックCPUでは数秒）からやり直しになる。
+        """
+        encoded = kwargs.get('encoded_image')
+        if encoded:
+            return encoded
+        if image is None:
+            raise ValueError("image も encoded_image も指定されていません")
+        return self._encode_image_to_base64(
+            image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
+        )
+
+    def _build_messages(self, image_b64: str, prompt: str) -> list:
+        """
+        チャットメッセージを組み立てる。
+
+        並び順は [system] → [画像] → [プロンプト本文] で固定すること。
+        プロンプト本文を画像より前に置くと、モード（G/D/Q）ごとに先頭から
+        内容が分岐してしまい、共有プレフィックスが消えて KV キャッシュが効かなくなる。
+        """
+        return [
+            {"role": "system", "content": self.system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                    {"type": "text", "text": prompt}
+                ]
+            }
+        ]
+
+    def prewarm(self, image: Optional[Image.Image], prefix_prompt: str, **kwargs) -> float:
+        """
+        画像プレフィックスを llama-server の KV キャッシュへ焼き込む（生成はしない）
+
+        Ctrl+Shift+P（事前キャプチャ）から呼ばれる。ユーザーはこの時点では
+        待っていないため、ここで重い画像エンコード + prefill を先に済ませておく。
+        後続の D / Q は差分プロンプトの prefill だけで済み、初動が大幅に短くなる。
+
+        Args:
+            image: PIL Image（encoded_image を渡す場合は None 可）
+            prefix_prompt: G/D プロンプトの先頭と一致する共通プレフィックス
+            **kwargs: encoded_image, image_max_size
+
+        Returns:
+            所要秒数
+        """
+        if not self.is_loaded:
+            raise RuntimeError("llama-server に接続されていません。")
+
+        start = time.time()
+        image_b64 = self._resolve_image_b64(image, kwargs)
+
+        # max_tokens=1 で「prefill だけ」を実行する。生成は捨てる。
+        payload = {
+            "messages": self._build_messages(image_b64, prefix_prompt),
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "stream": False
+        }
+        payload.update(self.extra_chat_payload)
+
+        response = requests.post(
+            f"{self.server_url}/v1/chat/completions",
+            json=payload,
+            timeout=300
+        )
+        response.raise_for_status()
+
+        elapsed = time.time() - start
+        print(f"🔥 事前warm完了（{elapsed:.2f}s）: 画像プレフィックスをKVキャッシュに保持")
+        return elapsed
+
     def _clean_output(self, text: str) -> str:
         """
         生成結果の後処理
@@ -683,33 +809,9 @@ class Qwen3VLServerModel(VisionLanguageModel):
             raise RuntimeError("llama-server に接続されていません。先に load() を呼び出してください。")
         
         try:
-            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
-            image_base64 = self._encode_image_to_base64(
-                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
-            )
-
-            # メッセージ構築
-            messages = [
-                {
-                    "role": "system",
-                    "content": self.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }
-            ]
+            # 画像Base64（app.py がキャッシュ済みなら encoded_image がそのまま渡る）
+            image_base64 = self._resolve_image_b64(image, kwargs)
+            messages = self._build_messages(image_base64, prompt)
 
             # 生成パラメータ
             max_tokens = kwargs.get('max_tokens', 200)
@@ -723,6 +825,7 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": False
             }
+            payload.update(self._sampling_params(kwargs))
             payload.update(self.extra_chat_payload)
 
             response = requests.post(
@@ -731,10 +834,15 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 timeout=300
             )
             response.raise_for_status()
-            
+
             result_json = response.json()
-            result = result_json['choices'][0]['message']['content']
-            
+            choice = result_json['choices'][0]
+            result = choice['message']['content']
+
+            stats = kwargs.get('stats')
+            if stats is not None and choice.get('finish_reason'):
+                stats['finish_reason'] = choice['finish_reason']
+
             # 後処理
             result = self._clean_output(result)
             
@@ -764,38 +872,14 @@ class Qwen3VLServerModel(VisionLanguageModel):
         print("🔮 画像分析を開始（ストリーミング）...")
 
         try:
-            # 画像をBase64にエンコード（解像度はリクエスト設定を尊重）
-            image_base64 = self._encode_image_to_base64(
-                image, max_size=kwargs.get('image_max_size', IMAGE_MAX_SIZE)
-            )
+            # 画像Base64（app.py がキャッシュ済みなら encoded_image がそのまま渡る）
+            image_base64 = self._resolve_image_b64(image, kwargs)
+            messages = self._build_messages(image_base64, prompt)
 
-            # メッセージ構築
-            messages = [
-                {
-                    "role": "system",
-                    "content": self.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }
-            ]
-            
             # 生成パラメータ
             max_tokens = kwargs.get('max_tokens', 1000)
             temperature = kwargs.get('temperature', 0.1)
-            
+
             # llama-server への POST リクエスト（ストリーミング）
             payload = {
                 "messages": messages,
@@ -804,7 +888,12 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 "top_p": kwargs.get('top_p', 0.9),
                 "stream": True
             }
+            payload.update(self._sampling_params(kwargs))
             payload.update(self.extra_chat_payload)
+
+            # 呼び出し側が生成の終わり方を知るための受け皿。
+            # finish_reason == 'length' なら上限に当たって途中で切れている。
+            stats = kwargs.get('stats')
 
             response = requests.post(
                 f"{self.server_url}/v1/chat/completions",
@@ -813,27 +902,35 @@ class Qwen3VLServerModel(VisionLanguageModel):
                 timeout=300
             )
             response.raise_for_status()
-            
-            # SSE形式でストリーム処理
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8') if isinstance(line, bytes) else line
-                    if line.startswith('data: '):
-                        data_str = line[6:]  # "data: " を除去
-                        if data_str == '[DONE]':
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            if 'choices' in data and len(data['choices']) > 0:
-                                delta = data['choices'][0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    yield content
-                        except json.JSONDecodeError:
-                            pass
-            
+
+            try:
+                # SSE形式でストリーム処理
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode('utf-8') if isinstance(line, bytes) else line
+                        if line.startswith('data: '):
+                            data_str = line[6:]  # "data: " を除去
+                            if data_str == '[DONE]':
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                if 'choices' in data and len(data['choices']) > 0:
+                                    choice = data['choices'][0]
+                                    if stats is not None and choice.get('finish_reason'):
+                                        stats['finish_reason'] = choice['finish_reason']
+                                    content = choice.get('delta', {}).get('content', '')
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                pass
+            finally:
+                # ループ検知などで呼び出し側が途中で打ち切った場合、ここで
+                # 接続を閉じて llama-server 側の生成も止める。閉じないと
+                # 上限に達するまで裏で生成が続き、次の操作を待たせてしまう。
+                response.close()
+
             print("✅ ストリーミング分析完了")
-            
+
         except Exception as e:
             print(f"❌ ストリーミング推論中にエラーが発生: {e}")
             raise

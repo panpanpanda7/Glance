@@ -43,8 +43,8 @@ call :log ""
 :: ============================================================
 if %SKIP_PULL%==0 (
     call :log "[1/4] 最新版を取得中 (git pull)..."
-    git pull >> "%LOG_FILE%" 2>&1
-    git pull
+    :: ログと画面の両方へ1回で出す（2回呼ぶと通信も2回走る）
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "git pull 2>&1 | Tee-Object -FilePath '%LOG_FILE%' -Append; exit $LASTEXITCODE"
     if %errorlevel% neq 0 (
         call :log "[WARNING] git pull に失敗しました。現在のバージョンで続行します。"
     ) else (
@@ -184,9 +184,20 @@ call :log "  （初回はモデルのロードに 30 秒〜数分かかります
 call :log ""
 
 cd /d "%~dp0electron"
-call npm run dev >> "%LOG_FILE%" 2>&1
-call npm run dev
+:: ログに残しつつ画面にも出す。
+:: 以前は「>> ログ」付きと無しで2回呼んでいたため、利用者が Glance を
+:: 閉じると2回目が走ってアプリが再び起動していた（npm run dev は
+:: アプリ終了までブロックするため）。Tee-Object で1回にまとめる。
+powershell -NoProfile -ExecutionPolicy Bypass -Command "npm run dev 2>&1 | Tee-Object -FilePath '%LOG_FILE%' -Append; exit $LASTEXITCODE"
 set APP_RESULT=%errorlevel%
+
+:: PowerShell 自体が起動できなかった場合（9009 = コマンドが見つからない）は
+:: 素の起動に切り替える。ログには残らないが、起動できないよりはよい。
+if %APP_RESULT%==9009 (
+    call :log "[WARNING] PowerShell 経由で起動できませんでした。通常の方法で起動します。"
+    call npm run dev
+    set APP_RESULT=!errorlevel!
+)
 
 if %APP_RESULT% neq 0 (
     call :log ""
