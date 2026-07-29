@@ -31,13 +31,27 @@ if ($targets) {
         Write-Host ("  停止: {0} (PID {1})" -f $t.ProcessName, $t.Id)
         Stop-Process -Id $t.Id -Force -ErrorAction SilentlyContinue
     }
-    Start-Sleep -Milliseconds 800   # ポート解放を待つ
     Write-Host "  [OK] 既存のGlanceプロセスを停止しました。"
 } else {
     Write-Host "  [OK] 既存のGlanceプロセスはありません。"
 }
 
-# 3) Glance が使うポートがまだ塞がっていたら警告（無関係なソフトは殺さない）
+# 3) ポートが実際に解放されるまで待つ（最大10秒）
+#    固定時間の待ちだと、解放前に次の起動が走って
+#    「ポート 5001 は既に使用されています」で弾かれる。
+#    バックエンドは競合を検出したら即終了する仕様なので、
+#    起動し直しても弾かれ続けないよう、ここで確実に空くのを待つ。
+$deadline = (Get-Date).AddSeconds(10)
+while ((Get-Date) -lt $deadline) {
+    $busy = @()
+    foreach ($port in 8080, 5001) {
+        $busy += Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    }
+    if (-not ($busy | Where-Object { $_ })) { break }
+    Start-Sleep -Milliseconds 300
+}
+
+# 4) それでも塞がっていたら警告（無関係なソフトは殺さない）
 foreach ($port in 8080, 5001) {
     $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($c in $conns) {
