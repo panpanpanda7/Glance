@@ -19,6 +19,20 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * 二重起動の防止
+ *
+ * 前回の Glance が残ったまま起動すると、ホットキーは先に登録した側の
+ * プロセスが受け取る。そちらのバックエンドは終了済みなので、押しても
+ * 「Pythonバックエンドが起動していません」としか言わなくなる。
+ * 画面が見えない利用者には、二重に起動していること自体が分からない。
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  console.log('⚠️  Glance は既に起動しています。二重起動を中止します。');
+  app.quit();
+}
+
 // グローバル変数
 let mainWindow = null;
 let questionOverlayWindow = null; // 質問入力用の透明オーバーレイウィンドウ
@@ -246,6 +260,26 @@ function saveSettings(settings) {
 let appSettings = loadSettings();
 
 /**
+ * 5001番ポートに前回のバックエンドが残っていないか確かめる
+ *
+ * 残ったまま起動すると、こちらが spawn した Python は
+ * 「ポート 5001 は既に使用されています」で即座に終了するのに、
+ * 残った側が /status に "ready" を返すため、起動待ちが成功したように
+ * 見えてしまう。実際にはホットキーを押しても何も起きない。
+ * 起動する前に確かめれば、この取り違えは起こらない。
+ */
+async function findLeftoverBackend() {
+  try {
+    const response = await fetch(`${PYTHON_API_URL}/status`, {
+      signal: AbortSignal.timeout(2000)
+    });
+    return response.ok;
+  } catch (e) {
+    return false;   // 応答なし＝ポートは空いている
+  }
+}
+
+/**
  * Pythonバックエンドを起動
  */
 async function startPythonBackend() {
@@ -255,6 +289,26 @@ async function startPythonBackend() {
   
   // 起動中の断続音を開始
   startProgressSound();
+
+  // 残ったバックエンドは、親プロセスの終了に気づくと自分で終了する。
+  // その数秒を待ってから、それでも居座るようなら理由を明示して止める
+  for (let i = 0; i < 10; i++) {
+    if (!await findLeftoverBackend()) break;
+    if (i === 0) {
+      console.log('⚠️  前回の Glance のバックエンドが残っています。終了を待ちます...');
+      if (mainWindow) {
+        mainWindow.webContents.send('log-message',
+          '[INFO] 前回のバックエンドが残っています。終了を待っています...');
+      }
+    }
+    if (i === 9) {
+      throw new Error(
+        '前回の Glance のバックエンドが終了していません（ポート 5001 使用中）。\n' +
+        'Glance をすべて終了してから、もう一度起動してください。'
+      );
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
   
   const isDev = process.argv.includes('--dev');
   let executablePath, args, cwd;
@@ -1085,6 +1139,9 @@ async function handleQuestionAnalysis(questionText) {
  * アプリケーション起動時の処理
  */
 app.whenReady().then(async () => {
+  // 二重起動側は何もしない（ホットキーもバックエンドも奪わせない）
+  if (!gotSingleInstanceLock) return;
+
   console.log('🚀 Glance（Python API版）を起動中...');
 
   createWindow();
@@ -1138,6 +1195,15 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    }
+  });
+
+  // もう一度起動されたときは、既にある窓を前面に出して知らせる
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
 });

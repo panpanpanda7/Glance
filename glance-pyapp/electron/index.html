@@ -213,30 +213,49 @@
       border-color: #ef4444;
     }
 
-    /* 折りたたみ（詳細設定・ログ） */
-    details.advanced {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 10px;
-      padding: 8px 12px;
+    /* 画面切り替え（メイン⇔設定）
+       設定はメインに重ねず、画面そのものを入れ替える。
+       重なって出ると、画面が見えない利用者は今どちらにいるのか分からなくなる */
+    [hidden] {
+      display: none !important;
+    }
+
+    .view {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       flex-shrink: 0;
     }
 
-    details.advanced summary {
-      cursor: pointer;
-      font-size: 12px;
-      opacity: 0.85;
-      user-select: none;
+    .settings-header h2 {
+      font-size: 18px;
+      font-weight: 600;
     }
 
-    details.advanced[open] summary {
-      margin-bottom: 8px;
+    /* 設定画面を開いたときに見出しへフォーカスを移すが、枠線は出さない */
+    .settings-header h2:focus {
+      outline: none;
     }
 
-    .advanced-body {
+    .settings-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      padding: 14px;
     }
 
     .advanced-hint {
@@ -341,6 +360,28 @@
       background: rgba(255, 255, 255, 0.3);
     }
 
+    /* 右上の設定ボタン／設定画面の戻るボタン */
+    .btn-nav {
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 8px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    .btn-nav:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-nav:focus-visible {
+      outline: 3px solid #ffd93d;
+      outline-offset: 2px;
+    }
+
     /* スクリーンリーダーにだけ読ませ、画面には出さない
        （display:none や visibility:hidden では読み上げ対象から外れてしまう） */
     .visually-hidden {
@@ -356,13 +397,18 @@
       border: 0;
     }
 
-    /* キーボードで選択中のメッセージ */
+    /* キーボードで選択中のメッセージ。
+       時刻（.msg-meta）まで枠に含めないと、どこからどこまでが
+       1件の認識結果なのか分からなくなる */
     .msg:focus {
-      outline: none;
+      outline: 3px solid #ffd93d;
+      outline-offset: 3px;
+      border-radius: 18px;
     }
 
-    .msg:focus .bubble {
-      box-shadow: 0 0 0 3px #ffd93d;
+    .msg:focus .msg-meta {
+      opacity: 1;
+      font-weight: 700;
     }
 
     /* 起動ログエリア */
@@ -498,30 +544,42 @@
         <div class="status-dot loading" id="status-dot"></div>
         <span id="status-text">起動中...</span>
       </div>
+      <!-- 「設定」と「戻る」は同じ場所（右上）に置き、画面に応じて入れ替える -->
+      <button type="button" id="settings-open" class="btn-nav">⚙ 設定</button>
+      <button type="button" id="settings-back" class="btn-nav" hidden>← 戻る</button>
     </header>
 
-    <p class="hotkey-hint" id="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
+    <main class="view" id="main-view">
+      <p class="hotkey-hint" id="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
 
-    <!--
-      チャット本体には aria-live を付けない。ストリーミングで本文を書き換える
-      たびに領域全体が再読み上げの対象になり、スクリーンリーダーが最初の一回を
-      読んだあと後続をキューから落としてしまうため（継続出力が読まれない原因）。
-      読み上げは下の #sr-announcer へ「新しく確定した文だけ」を追記する。
-    -->
-    <div class="chat" id="chat" role="log" tabindex="0"
-         aria-label="認識結果の履歴。上下キーで1件ずつ移動できます">
-      <div class="no-result" id="no-result">
-        Ctrl+Shift+G を押すと、<br>ここに認識結果が表示されます
+      <!--
+        チャット本体には aria-live を付けない。ストリーミングで本文を書き換える
+        たびに領域全体が再読み上げの対象になり、スクリーンリーダーが最初の一回を
+        読んだあと後続をキューから落としてしまうため（継続出力が読まれない原因）。
+        読み上げは下の #sr-announcer へ「新しく確定した文だけ」を追記する。
+      -->
+      <div class="chat" id="chat" role="log" tabindex="0"
+           aria-label="認識結果の履歴。Altを押しながら上下キーで1件ずつ移動できます">
+        <div class="no-result" id="no-result">
+          Ctrl+Shift+G を押すと、<br>ここに認識結果が表示されます
+        </div>
       </div>
-    </div>
+    </main>
 
     <!-- スクリーンリーダー専用。画面には表示せず、確定した文だけを流す -->
     <div id="sr-announcer" class="visually-hidden" role="status"
          aria-live="polite" aria-atomic="false"></div>
 
-    <details class="advanced">
-      <summary>詳細設定・ログ</summary>
-      <div class="advanced-body">
+    <!--
+      設定は「別の画面」として開く。メイン画面に重ねると、画面が見えない
+      利用者にはどちらを操作しているのか分からず混乱するため。
+      Esc または「戻る」で認識結果の画面へ戻る。
+    -->
+    <section class="view" id="settings-view" hidden aria-labelledby="settings-title">
+      <div class="settings-header">
+        <h2 id="settings-title" tabindex="-1">設定</h2>
+      </div>
+      <div class="settings-body">
         <fieldset class="hotkey-settings">
           <legend>読み上げ</legend>
           <div class="settings-row">
@@ -586,20 +644,28 @@
           </div>
           <p id="hotkey-status" class="advanced-hint" role="status" aria-live="polite"></p>
         </fieldset>
-        <div class="settings-row">
-          <label for="image-size-select">画像解像度</label>
-          <select id="image-size-select">
-            <option value="448">448px — 速い・低精度 (×16)</option>
-            <option value="672">672px — バランス (×24)</option>
-            <option value="896">896px — 標準・推奨 (×32)</option>
-            <option value="1120">1120px — 高精度 (×40)</option>
-            <option value="1344">1344px — 最高精度・遅い (×48)</option>
-            <option value="none">原寸 — リサイズなし</option>
-          </select>
-        </div>
-        <div id="startup-logs">ログ待機中...</div>
+        <fieldset class="hotkey-settings">
+          <legend>画像</legend>
+          <div class="settings-row">
+            <label for="image-size-select">画像解像度</label>
+            <select id="image-size-select">
+              <option value="448">448px — 速い・低精度 (×16)</option>
+              <option value="672">672px — バランス (×24)</option>
+              <option value="896">896px — 標準・推奨 (×32)</option>
+              <option value="1120">1120px — 高精度 (×40)</option>
+              <option value="1344">1344px — 最高精度・遅い (×48)</option>
+              <option value="none">原寸 — リサイズなし</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset class="hotkey-settings">
+          <legend>起動ログ</legend>
+          <div id="startup-logs">ログ待機中...</div>
+        </fieldset>
       </div>
-    </details>
+      <p class="advanced-hint">Esc キー、または右上の「戻る」ボタンで、認識結果の画面に戻ります。</p>
+    </section>
   </div>
 
   <!-- 質問モーダル -->
