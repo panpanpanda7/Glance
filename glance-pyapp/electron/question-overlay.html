@@ -111,6 +111,11 @@
 
     // キーボードイベント
     questionInput.addEventListener('keydown', (e) => {
+      // 日本語入力の変換中（IME オン）の Enter は「変換の確定」であって送信ではない。
+      // isComposing を見ないと、変換を確定した瞬間にそのまま送信されてしまう。
+      // keyCode 229 は、一部環境で isComposing が立たない場合の保険。
+      if (e.isComposing || e.keyCode === 229) return;
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         submitQuestion();

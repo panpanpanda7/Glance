@@ -181,9 +181,26 @@ function trimOldMessages() {
   }
 }
 
+// 秒まで出す。認識は数十秒おきに繰り返されるので、分までだと
+// 隣り合う結果が同じ時刻になり、境目の手がかりにならない
 function formatTime(dateLike) {
   const date = dateLike ? new Date(dateLike) : new Date();
-  return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleTimeString('ja-JP', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+// 読み上げ用。「14:05:30」のままでは音声エンジンによって読み方が変わり、
+// 区切りとして聞き取りにくい
+function formatTimeForSpeech(dateLike) {
+  const date = dateLike ? new Date(dateLike) : new Date();
+  return `${date.getHours()}時${date.getMinutes()}分${date.getSeconds()}秒`;
+}
+
+// 1件の吹き出しに時刻を持たせる（表示用と読み上げ用の両方）
+function setMessageTime(root, dateLike) {
+  root.dataset.time = formatTime(dateLike);
+  root.dataset.timeSpoken = formatTimeForSpeech(dateLike);
 }
 
 function createMessage(role) {
@@ -194,7 +211,10 @@ function createMessage(role) {
   // キーボードで1件ずつ移動できるようにする。tabindex="-1" は
   // Tab の巡回対象にはせず、スクリプトからフォーカスを当てられる状態
   msg.tabIndex = -1;
-  msg.dataset.time = formatTime();
+  // role を付けないと（ただの div のままだと）スクリーンリーダーが
+  // aria-label を無視して中身を素読みするため、先頭の時刻が読まれない
+  msg.setAttribute('role', 'article');
+  setMessageTime(msg, null);
   msg.dataset.role = role === 'user' ? '操作' : 'Glanceの説明';
 
   const bubble = document.createElement('div');
@@ -211,13 +231,16 @@ function createMessage(role) {
   return { root: msg, bubble, meta };
 }
 
-// フォーカス時に「時刻・種別・本文」がまとめて読まれるようにする
+// フォーカス時に「時刻・種別・本文」がまとめて読まれるようにする。
+// 時刻を必ず先頭に置く。Alt+↑↓ でたどるとき、ここが認識結果どうしの
+// 境目を示す唯一の手がかりになる
 function updateMessageLabel(msg) {
   const root = msg.root || msg;
   const bubble = root.querySelector('.bubble');
   const text = bubble ? bubble.textContent : '';
+  const time = root.dataset.timeSpoken || root.dataset.time || '';
   root.setAttribute('aria-label',
-    `${root.dataset.time} ${root.dataset.role}。${text}`);
+    `${time}、${root.dataset.role}。${text}`);
 }
 
 // ユーザーの操作（右側の吹き出し）
@@ -225,7 +248,7 @@ function addUserMessage(text) {
   const msg = createMessage('user');
   msg.bubble.textContent = text;
   const time = document.createElement('span');
-  time.textContent = formatTime();
+  time.textContent = msg.root.dataset.time;
   msg.meta.appendChild(time);
   updateMessageLabel(msg);
   scrollChatToBottom();
@@ -312,7 +335,7 @@ function finalizeAiMessage(msg, timestamp) {
   time.textContent = formatTime(timestamp);
   msg.meta.appendChild(time);
   msg.meta.appendChild(createSpeakButton(() => msg.bubble.textContent));
-  msg.root.dataset.time = formatTime(timestamp);
+  setMessageTime(msg.root, timestamp);
   updateMessageLabel(msg);
   scrollChatToBottom();
 }
@@ -331,7 +354,7 @@ async function maybeShowFirstTimeGuide() {
   const prepareKey = prettifyAccelerator(keys.prepare) || 'Ctrl+Shift+P';
 
   const guideText =
-    `さらに詳しい説明が欲しいときは ${detailedKey}、画面について質問したいときは ${questionKey} が使えます。` +
+    `画面全体を詳しく説明してほしいときは ${detailedKey}、画面について質問したいときは ${questionKey} が使えます。` +
     `どちらも直前に読み取った画面について答えます。` +
     `別の画面に切り替えてから使いたいときは、先に ${prepareKey} でその画面を記録してください。`;
   const msg = createMessage('ai');
@@ -356,16 +379,18 @@ window.electronAPI.onAnalysisStart((data) => {
   // 詳細・質問は撮り直さず、記録済みの画面に対して答える。
   // どの時点の画面について話しているのかが分かるよう明示する。
   if ((data.type === 'detailed' || data.type === 'question') && data.imageCapturedAt) {
-    label += `（${formatTime(data.imageCapturedAt)}の画面について）`;
+    label += `（${formatTimeForSpeech(data.imageCapturedAt)}の画面について）`;
   }
 
+  closeSettings({ silent: true });
   addUserMessage(label);
   currentAiMsg = addAiMessage();
 });
 
 // 事前キャプチャ（P）: 説明は出さず、記録できたことだけ伝える
 window.electronAPI.onCapturePrepared((data) => {
-  const time = formatTime(data && data.timestamp);
+  closeSettings({ silent: true });
+  const time = formatTimeForSpeech(data && data.timestamp);
   const msg = createMessage('ai');
   msg.root.classList.add('guide');
   msg.bubble.textContent = `📌 ${time} の画面を記録しました。このあとの「詳しく説明」「質問」は、この画面について答えます。`;
@@ -527,9 +552,80 @@ document.addEventListener('keydown', (e) => {
 
 // Enterキーで質問送信
 questionInput.addEventListener('keydown', (e) => {
+  // 日本語入力の変換中の Enter は「変換の確定」。ここで送信すると、
+  // 変換を確定しただけのつもりが質問として飛んでしまう
+  if (e.isComposing || e.keyCode === 229) return;
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     submitQuestion();
+  }
+});
+
+// ==========================================
+// 設定画面の切り替え
+//
+// 設定はメイン画面に重ねず、画面ごと入れ替える。重ねて出すと
+// 画面が見えない利用者は「今どちらを操作しているのか」が分からなくなる。
+//   右上の「設定」ボタン … 設定画面へ
+//   Esc / 「戻る」ボタン  … 認識結果の画面へ
+// ==========================================
+const mainView = document.getElementById('main-view');
+const settingsView = document.getElementById('settings-view');
+const settingsOpenBtn = document.getElementById('settings-open');
+const settingsBackBtn = document.getElementById('settings-back');
+const settingsTitle = document.getElementById('settings-title');
+
+function isSettingsOpen() {
+  return !!settingsView && !settingsView.hidden;
+}
+
+function openSettings() {
+  if (!settingsView || !mainView || isSettingsOpen()) return;
+  stopSpeech();
+  mainView.hidden = true;
+  settingsView.hidden = false;
+  // 右上のボタンを「設定」から「戻る」へ入れ替える（位置は変えない）
+  if (settingsOpenBtn) settingsOpenBtn.hidden = true;
+  if (settingsBackBtn) settingsBackBtn.hidden = false;
+  if (settingsTitle) settingsTitle.focus();
+
+  const message = '設定画面を開きました。Escキー、または右上の戻るボタンで認識結果の画面に戻ります。';
+  speakNow(message);
+  announce(message);
+}
+
+function closeSettings(options) {
+  if (!settingsView || !mainView || !isSettingsOpen()) return;
+  settingsView.hidden = true;
+  mainView.hidden = false;
+  if (settingsOpenBtn) settingsOpenBtn.hidden = false;
+  if (settingsBackBtn) settingsBackBtn.hidden = true;
+
+  // 認識が始まって自動で戻ったときは、結果の読み上げを邪魔しない
+  if (options && options.silent) {
+    if (chat) chat.focus();
+    return;
+  }
+
+  stopSpeech();
+  if (settingsOpenBtn) settingsOpenBtn.focus();
+  const message = '設定を閉じました。認識結果の画面です。';
+  speakNow(message);
+  announce(message);
+}
+
+if (settingsOpenBtn) settingsOpenBtn.addEventListener('click', openSettings);
+if (settingsBackBtn) settingsBackBtn.addEventListener('click', () => closeSettings());
+
+// 設定画面では、入力欄の中にいても Esc で戻れるようにする
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && isSettingsOpen()) {
+    event.preventDefault();
+    // 後続の Esc ハンドラ（読み上げ停止）まで走ると、
+    // 「設定を閉じました」の案内が即座に打ち切られてしまう
+    event.stopImmediatePropagation();
+    closeSettings();
   }
 });
 
@@ -585,6 +681,7 @@ function isTypingTarget(target) {
 document.addEventListener('keydown', (event) => {
   if (isTypingTarget(event.target)) return;
   if (questionModal && questionModal.style.display === 'block') return;
+  if (isSettingsOpen()) return;   // 設定画面では履歴の移動キーを奪わない
 
   const messages = getMessages();
 
