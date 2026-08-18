@@ -303,37 +303,118 @@ def get_writable_model_path():
     return base_dir
 
 
-def download_file(url, dest_path, file_description="ファイル"):
-    """進捗状況を更新しながらファイルをダウンロード"""
-    try:
-        print(f"📥 {file_description}をダウンロード中: {url}")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded_size = 0
-        last_reported_progress = -1  # 最後に表示した進捗を記録
-        
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded_size += len(chunk)
-                    if total_size > 0:
-                        progress = int((downloaded_size / total_size) * 100)
-                        # 進捗をグローバル変数に反映
-                        app_state["progress"] = progress
-                        app_state["detail"] = f"{progress}% ({downloaded_size // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)"
-                        
-                        # 10%刻みでログ出力（前回と異なる場合のみ）
-                        if progress % 10 == 0 and progress != 0 and progress != last_reported_progress:
-                            print(f"   進捗: {progress}%")
-                            last_reported_progress = progress  # 更新
-        
-        print(f"✅ {file_description}のダウンロード完了: {dest_path}")
-                        
-    except Exception as e:
-        print(f"❌ ダウンロードエラー: {e}")
-        raise e
+DOWNLOAD_RETRIES = 3
+
+
+def model_file_is_usable(path, expected_size=None):
+    """
+    既にあるモデルファイルをそのまま使ってよいか
+
+    サイズだけを見る。2〜3GB の SHA-256 を毎回計算すると、低速な HDD では
+    起動が数十秒延びるため。ダウンロードが途中で切れた場合はサイズが必ず
+    足りないので、実際に起きる壊れ方はこれで捕まる。バイト単位の破損は
+    ダウンロード時の SHA-256 検証が受け持つ。
+    """
+    if not os.path.exists(path):
+        return False
+    if expected_size is None:
+        # config に size が無い旧エントリ。存在すれば従来どおり使う
+        return True
+    actual_size = os.path.getsize(path)
+    if actual_size == expected_size:
+        return True
+    print(f"   ⚠️  サイズが一致しません: {os.path.basename(path)}")
+    print(f"      期待値 {expected_size} バイト / 実際 {actual_size} バイト")
+    print(f"      壊れているとみなして取得し直します")
+    return False
+
+
+def download_file(url, dest_path, file_description="ファイル",
+                  expected_sha256=None, expected_size=None):
+    """
+    進捗状況を更新しながらファイルをダウンロードする
+
+    途中で回線が切れたときに壊れたファイルが正規の名前で残ると、次回起動時に
+    「ファイルはある」と判定されてダウンロードがスキップされ、モデルの読み込みが
+    延々と失敗し続ける。画面の見えない利用者は %APPDATA% を開いて壊れたファイルを
+    消すことができないので、この状態は絶対に作らない。
+
+    そのため
+      1. 一時ファイル(.part)へ書く
+      2. サイズと SHA-256 を検証する
+      3. 通ったものだけを本来の名前へ差し替える（os.replace は不可分）
+    の順で行い、失敗した .part は必ず捨ててやり直す。
+    """
+    part_path = dest_path + '.part'
+    last_error = None
+
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        if attempt > 1:
+            print(f"   🔁 {file_description}のダウンロードを再試行します（{attempt}/{DOWNLOAD_RETRIES}）")
+            app_state["detail"] = f"再試行中（{attempt}/{DOWNLOAD_RETRIES}）"
+
+        try:
+            print(f"📥 {file_description}をダウンロード中: {url}")
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+            total_size = expected_size or int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+            last_reported_progress = -1  # 最後に表示した進捗を記録
+            hasher = hashlib.sha256()
+
+            with open(part_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        hasher.update(chunk)
+                        downloaded_size += len(chunk)
+                        if total_size > 0:
+                            progress = int((downloaded_size / total_size) * 100)
+                            # 進捗をグローバル変数に反映
+                            app_state["progress"] = progress
+                            app_state["detail"] = f"{progress}% ({downloaded_size // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)"
+
+                            # 10%刻みでログ出力（前回と異なる場合のみ）
+                            if progress % 10 == 0 and progress != 0 and progress != last_reported_progress:
+                                print(f"   進捗: {progress}%")
+                                last_reported_progress = progress  # 更新
+
+            # --- 検証 ---
+            if expected_size is not None and downloaded_size != expected_size:
+                raise ValueError(
+                    f"サイズが一致しません（期待 {expected_size} / 実際 {downloaded_size} バイト）。"
+                    f"通信が途中で切れた可能性があります"
+                )
+
+            if expected_sha256:
+                actual_sha256 = hasher.hexdigest()
+                if actual_sha256.lower() != expected_sha256.lower():
+                    raise ValueError(
+                        f"チェックサムが一致しません"
+                        f"（期待 {expected_sha256[:16]}... / 実際 {actual_sha256[:16]}...）"
+                    )
+                print(f"   ✅ チェックサム検証 OK")
+            else:
+                print(f"   ⚠️  config に sha256 が無いため検証を省略しました")
+
+            # 検証を通ったものだけを本来の名前にする
+            os.replace(part_path, dest_path)
+            print(f"✅ {file_description}のダウンロード完了: {dest_path}")
+            return
+
+        except Exception as e:
+            last_error = e
+            print(f"❌ ダウンロードエラー: {e}")
+            # 壊れた途中ファイルは残さない
+            try:
+                if os.path.exists(part_path):
+                    os.remove(part_path)
+            except OSError:
+                pass
+
+    raise RuntimeError(
+        f"{file_description}のダウンロードに{DOWNLOAD_RETRIES}回失敗しました: {last_error}"
+    )
 
 
 def initialize_system():
@@ -394,35 +475,42 @@ def initialize_system():
         print(f"   ✅ ダウンロードURL が正しく設定されています")
         
         # 4. モデルの存在確認とダウンロード
+        #    config の sha256/size は、URL のリビジョン固定とセットで
+        #    「テスターが検証した重みと、利用者が落とす重みが同じ」ことを保証する。
         print("\n📋 [ステップ4] モデルファイルの確認...")
-        
-        if not os.path.exists(model_path):
-            print(f"   📥 モデルファイルが見つかりません: {model_path}")
-            print(f"      ダウンロードを開始します...")
+
+        model_sha256 = active_model_config.get('sha256')
+        model_size = active_model_config.get('size')
+        mmproj_sha256 = active_model_config.get('mmproj_sha256')
+        mmproj_size = active_model_config.get('mmproj_size')
+
+        if not model_file_is_usable(model_path, model_size):
+            print(f"   📥 モデルファイルを取得します: {model_path}")
             app_state["status"] = "downloading"
             app_state["message"] = "AIモデルをダウンロードしています..."
             app_state["progress"] = 0
             app_state["detail"] = ""
-            
+
             try:
-                download_file(model_download_url, model_path, "AIモデル")
+                download_file(model_download_url, model_path, "AIモデル",
+                              expected_sha256=model_sha256, expected_size=model_size)
                 print(f"   ✅ モデルファイルのダウンロード完了")
             except Exception as e:
                 print(f"   ❌ モデルファイルのダウンロードに失敗: {e}")
                 raise
         else:
             print(f"   ✅ モデルファイルが存在します: {model_path}")
-            
-        if not os.path.exists(mmproj_path):
-            print(f"   📥 mmproj ファイルが見つかりません: {mmproj_path}")
-            print(f"      ダウンロードを開始します...")
+
+        if not model_file_is_usable(mmproj_path, mmproj_size):
+            print(f"   📥 mmproj ファイルを取得します: {mmproj_path}")
             app_state["status"] = "downloading"
             app_state["message"] = "画像処理エンジンをダウンロードしています..."
             app_state["progress"] = 0
             app_state["detail"] = ""
-            
+
             try:
-                download_file(mmproj_download_url, mmproj_path, "画像処理エンジン")
+                download_file(mmproj_download_url, mmproj_path, "画像処理エンジン",
+                              expected_sha256=mmproj_sha256, expected_size=mmproj_size)
                 print(f"   ✅ mmproj ファイルのダウンロード完了")
             except Exception as e:
                 print(f"   ❌ mmproj ファイルのダウンロードに失敗: {e}")

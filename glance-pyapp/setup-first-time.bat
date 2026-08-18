@@ -260,7 +260,7 @@ if %errorlevel% neq 0 (
 echo   config.yaml からモデル情報を読み取り、自動ダウンロードします...
 echo.
 python -c "
-import yaml, os, sys, urllib.request
+import yaml, os, sys, hashlib, urllib.request
 
 with open('config.yaml', encoding='utf-8') as f:
     cfg = yaml.safe_load(f)
@@ -274,24 +274,49 @@ mmproj_path  = model_cfg.get('mmproj_path', '')
 
 print(f'アクティブモデル: {active}')
 
-def download(url, dest):
+def download(url, dest, expected_sha256=None, expected_size=None):
+    # アプリ本体(app.py)と同じ手順:
+    # .part へ書いて、サイズと SHA-256 を検証してから本来の名前へ差し替える。
+    # 途中で切れた壊れたファイルが正規の名前で残ると、次回以降ずっと
+    # スキップされてモデルの読み込みに失敗し続けるため。
     if not url:
         return
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.exists(dest):
-        print(f'  既存ファイルをスキップ: {dest}')
-        return
+        if expected_size is None or os.path.getsize(dest) == expected_size:
+            print(f'  既存ファイルをスキップ: {dest}')
+            return
+        print(f'  [WARNING] サイズ不一致のため取得し直します: {os.path.basename(dest)}')
+    part = dest + '.part'
     print(f'  ダウンロード中: {os.path.basename(dest)}')
     print(f'    URL: {url}')
     try:
-        urllib.request.urlretrieve(url, dest)
+        hasher = hashlib.sha256()
+        total = 0
+        with urllib.request.urlopen(url) as res, open(part, 'wb') as f:
+            while True:
+                chunk = res.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                hasher.update(chunk)
+                total += len(chunk)
+        if expected_size is not None and total != expected_size:
+            raise ValueError(f'サイズ不一致 (期待 {expected_size} / 実際 {total})')
+        if expected_sha256 and hasher.hexdigest().lower() != expected_sha256.lower():
+            raise ValueError('チェックサム不一致')
+        os.replace(part, dest)
         print(f'  [OK] {os.path.basename(dest)}')
     except Exception as e:
+        if os.path.exists(part):
+            os.remove(part)
         print(f'  [WARNING] ダウンロード失敗: {e}')
-        print(f'            手動でダウンロードして {dest} に配置してください')
+        print(f'            もう一度 setup-first-time.bat を実行してください')
 
-download(download_url, model_path)
-download(mmproj_url,   mmproj_path)
+download(download_url, model_path,
+         model_cfg.get('sha256'), model_cfg.get('size'))
+download(mmproj_url, mmproj_path,
+         model_cfg.get('mmproj_sha256'), model_cfg.get('mmproj_size'))
 "
 if %errorlevel% neq 0 (
     echo.
