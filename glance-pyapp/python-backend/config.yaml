@@ -1,11 +1,17 @@
 # Glance Python Backend Configuration
 # モデル設定とプロンプト
 
-# activeModel: internvl-3_5-1b-gguf
-# activeModel: internvl-3_5-4b-gguf
-# activeModel: qwen2_5-vl-3b-gguf
-# activeModel: qwen3-vl-4b-server
-activeModel: qwen3-vl-4b-server
+# 既定は Qwen3.5 2B（高速モード）。低スペックの仕事PCでも実用速度で動くこと、
+# テスターの検証が update-and-run-light.bat 経由（= このモデル）で行われて
+# いることから、配布版の既定をこちらにしている。
+# 精度重視で 4B を使いたい場合は環境変数で切り替える:
+#   set GLANCE_MODEL=qwen3-vl-4b-server
+#
+# 切替候補:
+# activeModel: qwen3-vl-4b-server   … 精度は一段上。RAM 8GB・約2.8GB DL
+# activeModel: qwen2_5-vl-3b-gguf   … llama-cpp-python 直叩き（開発用）
+# activeModel: internvl-3_5-4b-gguf … 旧経路（開発用）
+activeModel: qwen3_5-2b-server
 
 models:
   # # ===== GGUF量子化モデル（推奨）=====

@@ -240,8 +240,8 @@ echo.
 echo   モデルは glance-pyapp\python-backend\models\gguf\ に配置します。
 echo.
 echo   使用モデル（config.yaml の activeModel を確認）:
-echo   - qwen3-vl-4b-server  ... 約 2.5GB + 1.2GB (mmproj)
-echo   - qwen2_5-vl-3b-gguf  ... 約 1.8GB + 0.9GB (mmproj)
+echo   - qwen3_5-2b-server   ... 約 1.3GB + 0.7GB (mmproj)  ^<-- 既定
+echo   - qwen3-vl-4b-server  ... 約 2.5GB + 0.5GB (mmproj)  精度重視
 echo.
 
 set MODELS_DIR=%~dp0python-backend\models\gguf
