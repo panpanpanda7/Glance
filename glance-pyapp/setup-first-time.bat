@@ -144,27 +144,12 @@ if exist requirements.txt (
     certutil -hashfile requirements.txt MD5 2>nul | findstr /v ":" > venv\.req_hash 2>nul
 )
 
-:: llama-cpp-python をビルド済み CPU Wheel で先行インストール（C++コンパイラ不要）
-echo   llama-cpp-python をインストール中（ビルド済みWheel使用）...
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
-if %errorlevel% neq 0 (
-    echo   [WARNING] ビルド済みWheelの取得に失敗しました。ソースビルドを試みます。
-    echo             Visual Studio Build Tools がインストールされていない場合は失敗します。
-    pip install llama-cpp-python
-    if %errorlevel% neq 0 (
-        echo.
-        echo [ERROR] llama-cpp-python のインストールに失敗しました。
-        echo         開発者に連絡してください。
-        pause
-    exit /b 1
-    )
-)
-echo   [OK] llama-cpp-python のインストール完了
-
-:: 残りの依存関係インストール（llama-cpp-python は上でインストール済みなのでスキップされる）
+:: 依存関係のインストール
+:: 推論は llama-server.exe （別プロセス）が行うため、Python 側に
+:: torch や llama-cpp-python は不要。requirements.txt はリリース版と同じ
+:: 最小構成にしてある（開発用の追加依存は requirements-dev.txt）。
 echo.
 echo   Python 依存関係をインストール中...
-echo   （PyTorch 等のダウンロードに数分かかります）
 echo.
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
@@ -255,8 +240,8 @@ echo.
 echo   モデルは glance-pyapp\python-backend\models\gguf\ に配置します。
 echo.
 echo   使用モデル（config.yaml の activeModel を確認）:
-echo   - qwen3-vl-4b-server  ... 約 2.5GB + 1.2GB (mmproj)
-echo   - qwen2_5-vl-3b-gguf  ... 約 1.8GB + 0.9GB (mmproj)
+echo   - qwen3_5-2b-server   ... 約 1.3GB + 0.7GB (mmproj)  ^<-- 既定
+echo   - qwen3-vl-4b-server  ... 約 2.5GB + 0.5GB (mmproj)  精度重視
 echo.
 
 set MODELS_DIR=%~dp0python-backend\models\gguf
@@ -275,7 +260,7 @@ if %errorlevel% neq 0 (
 echo   config.yaml からモデル情報を読み取り、自動ダウンロードします...
 echo.
 python -c "
-import yaml, os, sys, urllib.request
+import yaml, os, sys, hashlib, urllib.request
 
 with open('config.yaml', encoding='utf-8') as f:
     cfg = yaml.safe_load(f)
@@ -289,24 +274,49 @@ mmproj_path  = model_cfg.get('mmproj_path', '')
 
 print(f'アクティブモデル: {active}')
 
-def download(url, dest):
+def download(url, dest, expected_sha256=None, expected_size=None):
+    # アプリ本体(app.py)と同じ手順:
+    # .part へ書いて、サイズと SHA-256 を検証してから本来の名前へ差し替える。
+    # 途中で切れた壊れたファイルが正規の名前で残ると、次回以降ずっと
+    # スキップされてモデルの読み込みに失敗し続けるため。
     if not url:
         return
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.exists(dest):
-        print(f'  既存ファイルをスキップ: {dest}')
-        return
+        if expected_size is None or os.path.getsize(dest) == expected_size:
+            print(f'  既存ファイルをスキップ: {dest}')
+            return
+        print(f'  [WARNING] サイズ不一致のため取得し直します: {os.path.basename(dest)}')
+    part = dest + '.part'
     print(f'  ダウンロード中: {os.path.basename(dest)}')
     print(f'    URL: {url}')
     try:
-        urllib.request.urlretrieve(url, dest)
+        hasher = hashlib.sha256()
+        total = 0
+        with urllib.request.urlopen(url) as res, open(part, 'wb') as f:
+            while True:
+                chunk = res.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                hasher.update(chunk)
+                total += len(chunk)
+        if expected_size is not None and total != expected_size:
+            raise ValueError(f'サイズ不一致 (期待 {expected_size} / 実際 {total})')
+        if expected_sha256 and hasher.hexdigest().lower() != expected_sha256.lower():
+            raise ValueError('チェックサム不一致')
+        os.replace(part, dest)
         print(f'  [OK] {os.path.basename(dest)}')
     except Exception as e:
+        if os.path.exists(part):
+            os.remove(part)
         print(f'  [WARNING] ダウンロード失敗: {e}')
-        print(f'            手動でダウンロードして {dest} に配置してください')
+        print(f'            もう一度 setup-first-time.bat を実行してください')
 
-download(download_url, model_path)
-download(mmproj_url,   mmproj_path)
+download(download_url, model_path,
+         model_cfg.get('sha256'), model_cfg.get('size'))
+download(mmproj_url, mmproj_path,
+         model_cfg.get('mmproj_sha256'), model_cfg.get('mmproj_size'))
 "
 if %errorlevel% neq 0 (
     echo.

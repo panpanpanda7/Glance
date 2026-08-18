@@ -462,6 +462,8 @@ jobs:
         files: |
           glance-pyapp/electron/dist/*.exe
           glance-pyapp/electron/dist/*.zip
+          glance-pyapp/electron/dist/*.blockmap
+          glance-pyapp/electron/dist/latest.yml
         draft: false
         prerelease: false
         generate_release_notes: true

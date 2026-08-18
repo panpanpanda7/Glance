@@ -1138,6 +1138,56 @@ async function handleQuestionAnalysis(questionText) {
 /**
  * アプリケーション起動時の処理
  */
+/**
+ * 自動更新（インストーラ版のみ）
+ *
+ * 開発と、テスターの git clone + update-and-run.bat 経由の起動では
+ * app.isPackaged が false になるので、この関数は何もせずに戻る。
+ * そちらの更新は今までどおり git pull が担当する。
+ *
+ * インストーラ版では GitHub Releases の latest.yml を見て、新しい版が
+ * あれば黙ってダウンロードし、次にアプリを終了したときに適用する。
+ * ダイアログは一切出さない。画面の見えない利用者にとっては、操作を
+ * 求められない（次に起動したら新しくなっている）のが最も負担が軽い。
+ * electron-updater は依存に入っているが、万一読み込めなくてもアプリ
+ * 本体は動くべきなので、失敗はログに残すだけにする。
+ */
+async function setupAutoUpdater() {
+  if (!app.isPackaged) {
+    console.log('ℹ️  開発起動のため自動更新は行いません（更新は git pull）');
+    return;
+  }
+
+  try {
+    const { autoUpdater } = (await import('electron-updater')).default;
+
+    // 次回終了時に適用（既定値だが、意図を明示しておく）
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      console.log(`⬆️  新しいバージョンがあります: ${info.version}`);
+    });
+    autoUpdater.on('update-not-available', () => {
+      console.log('✅ Glance は最新です');
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log(`⬆️  ${info.version} をダウンロードしました。次回終了時に更新されます`);
+      if (mainWindow) {
+        mainWindow.webContents.send('log-message',
+          `[INFO] 新しいバージョン ${info.version} を次回起動時に適用します`);
+      }
+    });
+    autoUpdater.on('error', (err) => {
+      console.error('⚠️  自動更新の確認に失敗しました:', err?.message || err);
+    });
+
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    console.error('⚠️  自動更新を初期化できませんでした:', error?.message || error);
+  }
+}
+
 app.whenReady().then(async () => {
   // 二重起動側は何もしない（ホットキーもバックエンドも奪わせない）
   if (!gotSingleInstanceLock) return;
@@ -1191,6 +1241,9 @@ app.whenReady().then(async () => {
       });
     }
   }
+
+  // 自動更新の確認（インストーラ版のみ）
+  await setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

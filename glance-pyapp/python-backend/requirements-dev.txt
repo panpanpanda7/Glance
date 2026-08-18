@@ -1,0 +1,17 @@
+# Glance バックエンド - 開発・実験用の依存関係
+#
+# 開発者のみ:  pip install -r requirements-dev.txt
+# リリース／テスターは requirements.txt だけを使うため、
+# ここに書いたものはインストーラに入りません。
+
+-r requirements.txt
+
+# llama-cpp-python を直接叩く旧経路（models/internvl_gguf.py,
+# models/qwen_vl_gguf.py）で必要。現行の activeModel は
+# type: qwen3_vl_server なので通常経路では使いません。
+# Windows では CPU 版のビルド済み Wheel を使ってください:
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python>=0.3.0
+
+# モデルの取得（bench 用）
+huggingface-hub>=0.28.0

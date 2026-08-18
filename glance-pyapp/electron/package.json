@@ -1,7 +1,7 @@
 {
   "name": "glance-pyapp",
-  "version": "0.2.01",
-  "description": "Glance - 視覚障害者向けPC画面読み上げアプリ（Python API版）",
+  "version": "0.3.0",
+  "description": "Glance - 視覚障害者向けPC画面読み上げアプリ",
   "repository": {
     "type": "git",
     "url": "https://github.com/panpanpanda7/Glance.git"
@@ -11,20 +11,21 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac"
+    "build": "electron-builder --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:mac": "electron-builder --mac --publish never"
   },
   "keywords": [
     "accessibility",
     "screen-reader",
     "vision",
     "AI",
-    "InternVL"
+    "qwen3-vl"
   ],
   "author": "Glance Team",
   "license": "MIT",
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "js-yaml": "^4.1.0",
     "screenshot-desktop": "^1.15.0"
   },
@@ -49,11 +50,15 @@
       {
         "from": "resources/glance-backend",
         "to": "glance-backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -70,9 +75,17 @@
       "include": "build/installer.nsh"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.png",
       "category": "public.app-category.utilities"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "panpanpanda7",
+      "repo": "Glance"
     }
   }
 }
