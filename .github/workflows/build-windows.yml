@@ -454,6 +454,38 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # 5.5 ビルド結果の確認
+    #     タグを打つ前に workflow_dispatch で走らせて、インストーラのサイズと
+    #     latest.yml の有無を確かめられるようにする。latest.yml が欠けると
+    #     自動更新は無言で止まるので、公開前に必ずここで見る。
+    - name: Show build output
+      working-directory: ./glance-pyapp/electron
+      run: |
+        Write-Host "========== dist の中身 =========="
+        Get-ChildItem dist -File | ForEach-Object {
+          "{0,-45} {1,10:N1} MB" -f $_.Name, ($_.Length / 1MB)
+        }
+        if (Test-Path dist/latest.yml) {
+          Write-Host ""
+          Write-Host "---------- latest.yml ----------"
+          Get-Content dist/latest.yml
+        } else {
+          Write-Host ""
+          Write-Host "[WARNING] latest.yml がありません。自動更新が動きません"
+        }
+
+    # 5.6 タグ無しの実行では、インストーラを Actions の成果物として残す。
+    #     公開リリースを作らずに実機へ入れて試せるようにするため。
+    - name: Upload installer artifact
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: glance-installer
+        path: |
+          glance-pyapp/electron/dist/*.exe
+          glance-pyapp/electron/dist/latest.yml
+        retention-days: 14
+
     # 6. 生成されたインストーラーをリリースにアップロード
     - name: Release
       uses: softprops/action-gh-release@v1
