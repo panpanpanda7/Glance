@@ -20,7 +20,6 @@ import atexit
 import hashlib
 from collections import OrderedDict
 import requests
-from models.internvl import InternVLModel
 from models.internvl_gguf import InternVLGGUFModel
 from models.qwen_vl_gguf import QwenVLGGUFModel
 from models.qwen3_vl_server import Qwen3VLServerModel
@@ -30,9 +29,24 @@ from models.qwen3_vl_server import IMAGE_MAX_SIZE as IMAGE_MAX_SIZE_DEFAULT
 # WindowsでのUnicode出力エラー対策
 # ==========================================
 # 標準出力と標準エラー出力をUTF-8に強制する
+#
+# リリース版は console=False（コンソール窓なし）でビルドしている。
+# Electron が stdio: 'pipe' で起動するので通常は stdout/stderr とも
+# 生きているが、コンソールもパイプも無い状態で起動されると Python が
+# sys.stdout を None にする。そのまま .buffer を触ると起動直後に
+# 落ち、画面の見えない利用者には原因が分からないので必ず握る。
+def _force_utf8(stream):
+    if stream is None or not hasattr(stream, 'buffer'):
+        return stream
+    try:
+        return io.TextIOWrapper(stream.buffer, encoding='utf-8')
+    except Exception:
+        return stream
+
+
 if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    sys.stdout = _force_utf8(sys.stdout)
+    sys.stderr = _force_utf8(sys.stderr)
 
 # Flask アプリケーション初期化
 app = Flask(__name__)
@@ -583,9 +597,7 @@ def load_model(model_name: str):
         current_model.unload()
     
     # 新しいモデルをロード
-    if model_type == 'internvl':
-        current_model = InternVLModel(model_path)
-    elif model_type == 'internvl_gguf':
+    if model_type == 'internvl_gguf':
         # GGUF量子化モデル（InternVL）
         mmproj_path = model_config.get('mmproj_path')
         draft_model_path = model_config.get('draft_model_path')

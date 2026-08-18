@@ -1,30 +1,22 @@
-# Python依存関係
-# Qwen3-VL GGUF (llama-server経由) + Flask API
+# Glance バックエンド - 実行時の依存関係（リリース／テスター共通）
+#
+# ここに書いたものはすべて PyInstaller でインストーラに同梱されます。
+# 実際に import されないものは絶対に足さないでください。
+# 開発・実験用の依存は requirements-dev.txt に分けています。
 
-# Web Framework
+# Web Framework（Electron からの API）
 flask==3.1.0
 flask-cors==5.0.0
 
-# Machine Learning (llama.cpp版)
-llama-cpp-python>=0.3.0    # GGUF対応
-requests>=2.32.0           # llama-server REST API通信
+# 推論は llama-server.exe を別プロセスで起動し、REST 経由で叩きます
+# （Python 側に推論ライブラリは不要です）
+requests==2.32.3
 
-# Machine Learning (Transformers版 - 旧モデル用)
-torch==2.6.0
-torchvision==0.21.0  # 画像処理のために必要
-transformers==4.50.0
-accelerate==1.3.0
-sentencepiece==0.2.0
-protobuf==5.29.3
-einops>=0.6.0    # InternVL 依存関係
-timm>=0.6.13     # InternVL 依存関係
-
-# Image Processing
+# 画像処理
 pillow==11.1.0
 
-# System Utilities
-psutil>=5.9.0    # CPUコア数検出
-
-# Utilities
+# 設定ファイル
 pyyaml==6.0.2
-requests==2.32.3
+
+# CPUコア数検出（llama-server のスレッド数決定）
+psutil>=5.9.0

@@ -144,27 +144,12 @@ if exist requirements.txt (
     certutil -hashfile requirements.txt MD5 2>nul | findstr /v ":" > venv\.req_hash 2>nul
 )
 
-:: llama-cpp-python をビルド済み CPU Wheel で先行インストール（C++コンパイラ不要）
-echo   llama-cpp-python をインストール中（ビルド済みWheel使用）...
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
-if %errorlevel% neq 0 (
-    echo   [WARNING] ビルド済みWheelの取得に失敗しました。ソースビルドを試みます。
-    echo             Visual Studio Build Tools がインストールされていない場合は失敗します。
-    pip install llama-cpp-python
-    if %errorlevel% neq 0 (
-        echo.
-        echo [ERROR] llama-cpp-python のインストールに失敗しました。
-        echo         開発者に連絡してください。
-        pause
-    exit /b 1
-    )
-)
-echo   [OK] llama-cpp-python のインストール完了
-
-:: 残りの依存関係インストール（llama-cpp-python は上でインストール済みなのでスキップされる）
+:: 依存関係のインストール
+:: 推論は llama-server.exe （別プロセス）が行うため、Python 側に
+:: torch や llama-cpp-python は不要。requirements.txt はリリース版と同じ
+:: 最小構成にしてある（開発用の追加依存は requirements-dev.txt）。
 echo.
 echo   Python 依存関係をインストール中...
-echo   （PyTorch 等のダウンロードに数分かかります）
 echo.
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
