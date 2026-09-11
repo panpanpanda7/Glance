@@ -14,6 +14,8 @@
 
 ## ダウンロード
 
+利用者向けの案内ページ: <https://panpanpanda7.github.io/Glance/>
+
 [**Glance をダウンロード（Windows 用インストーラ、約 120MB）**](https://github.com/panpanpanda7/Glance/releases/latest/download/Glance-Setup.exe)
 
 このリンクを押すと、最新版のインストーラ `Glance-Setup.exe` のダウンロードがすぐに始まります。
