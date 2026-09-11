@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glance — 画面をAIが読み上げる Windows 用アプリ</title>
+<meta name="description" content="Glance は、いま画面に映っているものを AI が日本語で読み上げる Windows 用の無料アプリです。画像はパソコンの外に送られません。">
+
+<!--
+  このページの作りについて
+
+  読み手の多くがスクリーンリーダー利用者であることを前提にしている。
+  ・JavaScript は使わない（読み込み失敗や無効化で内容が消えないようにする）
+  ・見出しは h1 → h2 → h3 の順で飛ばさない（見出しジャンプで目次代わりになる）
+  ・リンク文字列だけで行き先が分かるようにする（「こちら」は使わない）
+  ・表は使わない。読み上げでは「列1 …、列2 …」と読まれて手間が増えるため
+  ・文字サイズは rem 指定。利用者のブラウザ設定の拡大をそのまま効かせる
+  ・色の対比は WCAG AA 以上。ダークモードにも追従する
+-->
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #4a4a4a;
+    --accent: #12284b;
+    --accent-fg: #ffffff;
+    --link: #0b4a9b;
+    --link-visited: #5a2d82;
+    --border: #c8c8c8;
+    --note-bg: #f2f5fa;
+    --focus: #d97706;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --fg: #ececec;
+      --muted: #bdbdbd;
+      --accent: #ffc24b;
+      --accent-fg: #12284b;
+      --link: #8ab8ff;
+      --link-visited: #d2b3ff;
+      --border: #444a52;
+      --note-bg: #1e222a;
+      --focus: #ffc24b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Yu Gothic UI", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+    font-size: 1.0625rem;
+    line-height: 1.9;
+    margin: 0 auto;
+    max-width: 44rem;
+    padding: 0 1.25rem 4rem;
+  }
+
+  /* キーボード移動中の現在地を必ず見えるようにする */
+  a:focus-visible,
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  /* Tab の1回目で本文へ飛べる。毎回ヘッダーを読み飛ばさせない */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+  }
+  .skip-link:focus {
+    position: static;
+    display: inline-block;
+    margin: 0.5rem 0;
+    padding: 0.5rem 1rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  header { padding-top: 2.5rem; }
+
+  .logo {
+    width: 96px;
+    height: 96px;
+  }
+
+  h1 {
+    font-size: 2rem;
+    line-height: 1.4;
+    margin: 0.75rem 0 0.25rem;
+  }
+
+  .tagline {
+    font-size: 1.2rem;
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.45rem;
+    margin: 2.75rem 0 0.75rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 2px solid var(--border);
+  }
+
+  h3 {
+    font-size: 1.15rem;
+    margin: 1.75rem 0 0.5rem;
+  }
+
+  a { color: var(--link); }
+  a:visited { color: var(--link-visited); }
+
+  /* 目立たせるのは大きさと余白で行う。色だけに意味を持たせない */
+  .download {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 1.2rem;
+    font-weight: bold;
+    text-decoration: underline;
+    padding: 1rem 1.5rem;
+    margin: 0.5rem 0;
+    border-radius: 8px;
+    min-height: 44px;
+  }
+  .download:visited { color: var(--accent-fg); }
+
+  .note {
+    background: var(--note-bg);
+    border-left: 5px solid var(--accent);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+  }
+  .note > :first-child { margin-top: 0; }
+  .note > :last-child { margin-bottom: 0; }
+
+  ul, ol { padding-left: 1.6rem; }
+  li { margin: 0.45rem 0; }
+
+  kbd {
+    font-family: inherit;
+    font-weight: bold;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+  }
+
+  code {
+    font-family: "Consolas", "Courier New", monospace;
+    background: var(--note-bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    word-break: break-all;
+  }
+
+  footer {
+    margin-top: 3.5rem;
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--border);
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main">本文へスキップ</a>
+
+<header>
+  <!-- 名前は h1 が伝えるので、画像は装飾として読み上げ対象から外す -->
+  <img class="logo" src="icon.png" alt="" aria-hidden="true" width="96" height="96">
+  <h1>Glance</h1>
+  <p class="tagline">いま画面に映っているものを、AI が日本語で読み上げます。</p>
+</header>
+
+<main id="main">
+
+  <p>
+    Glance は Windows 用の無料アプリです。スクリーンリーダーでは読めない画像・図・
+    グラフ・レイアウトを、ホットキー一つで日本語の説明にします。
+  </p>
+
+  <p>
+    <strong>画像がパソコンの外に送られることはありません。</strong>
+    AI はパソコンの中だけで動きます。インターネットが必要なのは、初回起動時に
+    AI 本体をダウンロードするときだけです。利用登録やアカウント作成も要りません。
+  </p>
+
+  <h2 id="download">ダウンロード</h2>
+
+  <p>
+    <a class="download" href="https://github.com/panpanpanda7/Glance/releases/latest/download/Glance-Setup.exe">Glance をダウンロード（Windows 用インストーラ、約 115MB）</a>
+  </p>
+
+  <p>
+    このリンクを押すと、最新版のインストーラ <code>Glance-Setup.exe</code> の
+    ダウンロードがすぐに始まります。GitHub のアカウントやログインは必要ありません。
+  </p>
+
+  <h3>動作条件</h3>
+
+  <ul>
+    <li>OS: Windows 10 または Windows 11（64ビット）</li>
+    <li>メモリ: 8GB 以上</li>
+    <li>空き容量: 約 3GB（アプリ本体と AI モデルの合計）</li>
+    <li>インターネット: 初回起動時のみ必要（AI モデルのダウンロードのため）</li>
+  </ul>
+
+  <p>
+    グラフィックス機能があれば自動的に使用して高速化します。無い場合も CPU で動作します。
+  </p>
+
+  <h2 id="install">インストール手順</h2>
+
+  <ol>
+    <li>上のリンクから <code>Glance-Setup.exe</code> をダウンロードします。</li>
+    <li>ダウンロードしたファイルを実行します。</li>
+    <li>
+      <strong>「WindowsによってPCが保護されました」という画面が出た場合</strong>、
+      次の操作で進めてください。
+      <div class="note">
+        <p>
+          これは、開発者証明書を購入していない個人開発のアプリすべてに出る警告です。
+          Glance に問題があるという意味ではありません。
+        </p>
+        <ol>
+          <li>「詳細情報」というリンクを押します（スクリーンリーダーではリンクとして読まれます）。</li>
+          <li>表示された「実行」ボタンを押します。</li>
+        </ol>
+      </div>
+    </li>
+    <li>インストールが終わると、デスクトップとスタートメニューに Glance が追加されます。</li>
+  </ol>
+
+  <h3>初回起動について</h3>
+
+  <p>
+    初めて起動したときだけ、AI モデル（約 1.9GB）を自動でダウンロードします。
+    <strong>進み具合は音声でお知らせします。</strong>
+    回線の速さによっては 5 分から 30 分ほどかかります。
+    通信が止まったときや、やり直しになったときもお伝えしますので、
+    ウィンドウを閉じずにお待ちください。
+  </p>
+
+  <p>
+    2 回目以降の起動では、このダウンロードは発生しません。
+  </p>
+
+  <h2 id="usage">使い方</h2>
+
+  <p>
+    インストール後は常駐します。どのアプリを使っているときでも、次のキーが使えます。
+  </p>
+
+  <ul>
+    <li><kbd>Ctrl + Shift + G</kbd> … いまの画面を説明する</li>
+    <li><kbd>Ctrl + Shift + D</kbd> … 直前に説明した画面を、さらに詳しく説明する</li>
+    <li><kbd>Ctrl + Shift + Q</kbd> … 直前の画面について質問する</li>
+    <li><kbd>Ctrl + Shift + P</kbd> … 画面を先に取り込んでおく（読み上げはしない）</li>
+  </ul>
+
+  <p>
+    <kbd>Ctrl + Shift + P</kbd> は、これから説明させたい画面を先に取り込んでおく機能です。
+    取り込みだけ済ませておくと、<kbd>Ctrl + Shift + D</kbd> や
+    <kbd>Ctrl + Shift + Q</kbd> の応答が速くなります。
+  </p>
+
+  <h2 id="update">更新について</h2>
+
+  <p>
+    更新は自動です。新しい版が出ると裏で取得し、次に Glance を終了したときに
+    適用されます。操作は必要ありません。
+  </p>
+
+  <h2 id="troubleshooting">うまく動かないときは</h2>
+
+  <ul>
+    <li>
+      <strong>キーを押しても何も言わない</strong> …
+      他のアプリが同じキーを使っている可能性があります。
+      一度 Glance を終了して起動し直してください。
+    </li>
+    <li>
+      <strong>起動が遅い</strong> …
+      初回はモデルの読み込みに 30 秒から数分かかります。
+    </li>
+    <li>
+      <strong>セキュリティソフトに止められた</strong> …
+      AI の実行ファイルが誤検知されることがあります。
+      Glance のインストール先を除外設定に追加してください。
+    </li>
+  </ul>
+
+  <p>
+    解決しない場合は
+    <a href="https://github.com/panpanpanda7/Glance/issues">GitHub の Issues ページから報告</a>
+    してください。
+  </p>
+
+  <h2 id="privacy">プライバシーについて</h2>
+
+  <p>
+    Glance が撮影した画面は、そのパソコンの中だけで処理されます。
+    外部のサーバーへ送信することはありません。
+    通信が発生するのは次の 2 つの場合だけです。
+  </p>
+
+  <ul>
+    <li>初回起動時に、AI モデルを配布元からダウンロードするとき</li>
+    <li>新しい版が出ていないかを確認し、更新を取得するとき</li>
+  </ul>
+
+</main>
+
+<footer>
+  <h2 id="about">このアプリについて</h2>
+
+  <ul>
+    <li>無料・オープンソース（MIT ライセンス）です。</li>
+    <li>
+      ソースコードと開発者向けの情報は
+      <a href="https://github.com/panpanpanda7/Glance">GitHub のリポジトリ</a>
+      にあります。
+    </li>
+    <li>
+      過去の版と変更点は
+      <a href="https://github.com/panpanpanda7/Glance/releases">GitHub のリリース一覧</a>
+      で確認できます。
+    </li>
+  </ul>
+</footer>
+
+</body>
+</html>
