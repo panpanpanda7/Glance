@@ -9,6 +9,23 @@ on:
 permissions:
   contents: write
 
+env:
+  # 同梱する llama.cpp のリリースタグ。
+  #
+  # ggml-org/llama.cpp のバイナリ入りリリース（b#####）は全て prerelease 扱いで、
+  # GitHub の releases/latest はそれらを飛ばす。2026-09-04 に nightly-tag.txt しか
+  # 持たない v0.4.0 が非 prerelease で作られてからは、latest がそれを返すように
+  # なり、ビルドが「Windows x64 バイナリが見つかりません」で落ちるようになった。
+  #
+  # 併せてタグを固定する。ここが浮動だと、同じ v0.3.0 を再ビルドしただけで
+  # 利用者の手元に載る推論エンジンが変わりうる。画面を見て切り分けられない
+  # 利用者に配る以上、配布物は再現可能にしておく。
+  #
+  # 上げるときは、実機で一度起動を確認してから上げること。
+  # 新しいものを試したいだけなら latest を入れると、資産を持つ最新の
+  # リリースを自動で探す。
+  LLAMA_CPP_TAG: b10901
+
 jobs:
   build:
     runs-on: windows-latest
@@ -33,21 +50,56 @@ jobs:
 
     # 1.5 llama-server.exe をダウンロード
     - name: Download llama-server binary
+      env:
+        # Actions は secrets を自動で env に入れないので明示的に渡す。
+        # 空のまま Authorization ヘッダを送ると 401 になる。
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Windows 用 llama.cpp バイナリをダウンロード（最新リリース）
+        # Windows 用 llama.cpp バイナリをダウンロード（LLAMA_CPP_TAG で固定）
         Write-Host "========== llama-server.exe ダウンロード開始 =========="
         
-        # GitHub API で最新リリース情報を取得
-        Write-Host "📥 GitHub API から最新リリース情報を取得中..."
-        try {
-          $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers @{"Accept"="application/vnd.github.v3+json"}
-          $latestRelease = $response.Content | ConvertFrom-Json
-          Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
-        } catch {
-          Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
-          Write-Host $_.Exception.Message
-          exit 1
+        # GitHub API でリリース情報を取得する。
+        # releases/latest は使わない（上の LLAMA_CPP_TAG のコメントを参照）。
+        $apiBase = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+        $headers = @{
+          "Accept" = "application/vnd.github.v3+json"
+          # 素の api.github.com はランナーの共有 IP ごとに時間 60 回しか許されず、
+          # 混み合った時間帯に不定期に落ちる。トークンを付けて回避する。
+          "Authorization" = "Bearer $env:GITHUB_TOKEN"
         }
+        $assetPattern = "bin-win-vulkan-x64.*\.zip$"
+        $latestRelease = $null
+
+        if ($env:LLAMA_CPP_TAG -eq "latest") {
+          Write-Host "📥 資産を持つ最新のリリースを検索中（prerelease を含む）..."
+          try {
+            $releases = Invoke-RestMethod -Uri "$($apiBase)?per_page=30" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+          foreach ($r in $releases) {
+            if ($r.assets | Where-Object { $_.name -match $assetPattern }) {
+              $latestRelease = $r
+              break
+            }
+          }
+          if (-not $latestRelease) {
+            Write-Host "❌ ERROR: 直近 30 件のリリースに Windows x64 の資産がありません"
+            exit 1
+          }
+        } else {
+          Write-Host "📥 固定タグのリリース情報を取得中: $($env:LLAMA_CPP_TAG)"
+          try {
+            $latestRelease = Invoke-RestMethod -Uri "$apiBase/tags/$($env:LLAMA_CPP_TAG)" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: タグ $($env:LLAMA_CPP_TAG) のリリースを取得できません"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+        }
+        Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
         
         # Assets 一覧をログ出力して確認
         Write-Host "📋 利用可能な assets:"
@@ -189,7 +241,7 @@ jobs:
         } else {
           Write-Host "❌ ERROR: llama-server.exe が展開後のアーカイブに見つかりません"
           Write-Host "展開後のディレクトリ構造:"
-          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object FullName | Head -20
+          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object -First 20 FullName
           exit 1
         }
         
