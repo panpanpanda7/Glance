@@ -723,8 +723,168 @@ document.addEventListener('keydown', (event) => {
 // ==========================================
 
 let lastStatus = "";
-let lastSpokenProgress = -1; // 前回読み上げた進捗
 let statusCheckInterval = null; // ポーリング用のインターバルID
+
+// ==========================================
+// 初回ダウンロードの進捗案内
+//
+// 初回起動では数GBを取得するため、回線によっては十数分から1時間近く
+// 「何も起きない時間」が続く。画面を見られない利用者にはフリーズと区別が
+// つかず、強制終了されると取得済みの .part が捨てられて最初からやり直しに
+// なる。そこで
+//   ・10%刻みだけでなく、一定時間ごとにも必ず声を出す（細い回線では
+//     10%進むのに何分もかかり、刻みだけでは無音時間が埋まらない）
+//   ・残り時間を添える（待つか中断するかを本人が判断できるようにする）
+//   ・受信が止まったら黙らずに「止まっている」と言う
+// の3点を守る。読み上げは本体TTSと live region の両方に出す。Windows では
+// 本体TTSが鳴らない環境が報告されており、どちらか一方には依存できない。
+// ==========================================
+
+const DL_HEARTBEAT_MS = 45000; // これ以上黙らない
+const DL_STALL_SEC = 20;       // 受信がこれだけ途切れたら「止まっている」
+
+const dl = {
+  introSpoken: false,
+  phaseKey: "",        // 読み上げ済みのファイル（step + 名前）
+  lastMilestone: -1,   // 読み上げ済みの10%刻み
+  lastSpokenAt: 0,
+  stalled: false,
+  lastAttempt: 1,
+};
+
+function resetDownloadNarration() {
+  dl.introSpoken = false;
+  dl.phaseKey = "";
+  dl.lastMilestone = -1;
+  dl.lastSpokenAt = 0;
+  dl.stalled = false;
+  dl.lastAttempt = 1;
+}
+
+// 本体TTSと live region の両方へ。speakNow ではなく積む方を使う。
+// speakNow は溜まっている分を捨てるので、長い冒頭の説明が次の進捗通知で
+// 途中から切られてしまう。
+function notifyProgress(text) {
+  if (!text) return;
+  enqueueSpeech(text);
+  announce(text);
+  dl.lastSpokenAt = Date.now();
+}
+
+function formatBytesJa(bytes) {
+  if (!bytes || bytes <= 0) return "";
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(1)}ギガバイト`;
+  return `${Math.round(bytes / (1024 * 1024))}メガバイト`;
+}
+
+function formatEtaJa(seconds) {
+  if (seconds === null || seconds === undefined || seconds < 0) return "";
+  if (seconds < 60) return "まもなく完了します";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `残りおよそ${minutes}分`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0
+    ? `残りおよそ${hours}時間`
+    : `残りおよそ${hours}時間${rest}分`;
+}
+
+function handleDownloadStatus(data) {
+  const progress = data.progress || 0;
+  const label = data.phase_label || "ファイル";
+  const step = data.step || 0;
+  const totalSteps = data.total_steps || 0;
+  const attempt = data.attempt || 1;
+
+  // --- 画面表示（晴眼の付き添い者や、あとから見返す人のため） ---
+  let displayText = data.message || "";
+  if (data.detail) displayText += ` ${data.detail}`;
+  const etaText = formatEtaJa(data.eta_seconds);
+  if (etaText) displayText += ` / ${etaText}`;
+  if (statusText) statusText.textContent = displayText;
+  statusDot.className = 'status-dot connecting';
+
+  // ポーリングが生きているときだけ喋る。準備完了後の遅延読み上げを防ぐ。
+  if (!statusCheckInterval) return;
+
+  // --- 1. 最初に一度だけ、何が始まったのかを説明する ---
+  if (!dl.introSpoken) {
+    dl.introSpoken = true;
+    const overall = formatBytesJa(data.overall_total_bytes);
+    const sizePart = overall ? `全体でおよそ${overall}あり、` : "";
+    notifyProgress(
+      `初回起動のため、AIの本体をインターネットから取得します。${sizePart}` +
+      `回線の速さによっては30分ほどかかります。進み具合は定期的にお知らせします。` +
+      `このウィンドウを閉じずにお待ちください。`
+    );
+    return;
+  }
+
+  // --- 2. 通信が途切れて取り直しになったとき ---
+  if (attempt > dl.lastAttempt) {
+    dl.lastAttempt = attempt;
+    dl.lastMilestone = -1;
+    dl.stalled = false;
+    notifyProgress(
+      `通信が途切れたため、${label}を最初から取得し直します。${attempt}回目の試行です。`
+    );
+    return;
+  }
+
+  // --- 3. 何本目に入ったか ---
+  //     進捗が100%まで行ってから0%に戻る場面で、失敗してやり直したのか
+  //     次のファイルに進んだのかを、聞いただけで区別できるようにする。
+  const phaseKey = `${step}:${label}`;
+  if (phaseKey !== dl.phaseKey) {
+    dl.phaseKey = phaseKey;
+    dl.lastMilestone = -1;
+    dl.lastAttempt = attempt;
+    const order = totalSteps > 1 ? `${totalSteps}つのうち${step}つ目、` : "";
+    const size = formatBytesJa(data.total_bytes);
+    const sizePart = size ? `およそ${size}です。` : "";
+    notifyProgress(`${order}${label}を取得します。${sizePart}`);
+    return;
+  }
+
+  // --- 4. 受信が止まっていないか ---
+  //     回線が無言で切れると受信側は待ち続ける。黙ったままにせず状態を伝える。
+  const sinceUpdate = data.updated_at
+    ? (Date.now() / 1000) - data.updated_at
+    : 0;
+
+  if (sinceUpdate > DL_STALL_SEC) {
+    if (!dl.stalled) {
+      dl.stalled = true;
+      notifyProgress(
+        `通信が止まっているようです。${progress}パーセントまで受信しています。` +
+        `接続を確認しながら待っています。しばらくしても進まない場合は、` +
+        `いったん閉じて、回線が安定してからやり直してください。`
+      );
+    }
+    return;
+  }
+
+  if (dl.stalled) {
+    dl.stalled = false;
+    notifyProgress(`通信が回復しました。${label}の取得を続けます。`);
+    return;
+  }
+
+  // --- 5. 10%刻み、または一定時間ごとに進捗を伝える ---
+  //     「progress % 10 === 0」だと、速い回線では刻みをまたいで進んだときに
+  //     読み飛ばされる。到達したかどうかで判定する。
+  const milestone = Math.floor(progress / 10) * 10;
+  const reachedNewMilestone = milestone > 0 && milestone > dl.lastMilestone;
+  const silentTooLong = Date.now() - dl.lastSpokenAt > DL_HEARTBEAT_MS;
+
+  if (reachedNewMilestone || silentTooLong) {
+    if (reachedNewMilestone) dl.lastMilestone = milestone;
+    const eta = formatEtaJa(data.eta_seconds);
+    const etaPart = eta ? `${eta}。` : "";
+    notifyProgress(`${label}、${progress}パーセント。${etaPart}`);
+  }
+}
 
 function checkSystemStatus() {
   fetch('http://127.0.0.1:5001/status')
@@ -736,19 +896,8 @@ function checkSystemStatus() {
         statusDot.className = 'status-dot connecting';
 
       } else if (data.status === 'downloading') {
-        // ダウンロード中
-        let displayText = `${data.message}`;
-        if (data.detail) {
-          displayText += ` ${data.detail}`;
-        }
-        if (statusText) statusText.textContent = displayText;
-        statusDot.className = 'status-dot connecting';
-
-        // 音声読み上げ（10%刻みで通知）- ポーリング有効時のみ
-        if (data.progress % 10 === 0 && data.progress !== lastSpokenProgress && data.progress > 0 && statusCheckInterval) {
-          speakNow(`準備中、${data.progress}パーセント完了`);
-          lastSpokenProgress = data.progress;
-        }
+        // ダウンロード中（進捗案内は handleDownloadStatus に集約）
+        handleDownloadStatus(data);
 
       } else if (data.status === 'loading_model') {
         // モデルロード中
@@ -756,7 +905,13 @@ function checkSystemStatus() {
         statusDot.className = 'status-dot connecting';
         // ポーリング有効時のみTTS読み上げ
         if (lastStatus !== 'loading_model' && statusCheckInterval) {
-          speakNow("ダウンロード完了。AIを起動しています。");
+          const wasDownloading = lastStatus === 'downloading';
+          const message = wasDownloading
+            ? "ダウンロードが完了しました。AIを起動しています。この処理には1分ほどかかります。"
+            : "AIを起動しています。";
+          enqueueSpeech(message);
+          announce(message);
+          resetDownloadNarration();
         }
 
       } else if (data.status === 'ready') {
@@ -783,6 +938,20 @@ function checkSystemStatus() {
         }
         if (statusText) statusText.textContent = errorText;
         statusDot.className = 'status-dot error';
+
+        // 起動失敗を黙って画面に出すだけにしない。ここまで案内しておいて
+        // 最後だけ無音になると、待ち続ければいいのか諦めればいいのかが
+        // 分からないまま放置されることになる。
+        if (lastStatus !== 'error' && statusCheckInterval) {
+          const failedWhileDownloading = lastStatus === 'downloading';
+          const guidance = failedWhileDownloading
+            ? "AIの取得に失敗しました。インターネット接続を確認して、Glanceを起動し直してください。" +
+              "取得し直しになるため、安定した回線でお試しください。"
+            : "起動に失敗しました。Glanceを起動し直してください。";
+          enqueueSpeech(`${data.message}。${guidance}`);
+          announce(`${errorText}。${guidance}`);
+          resetDownloadNarration();
+        }
       }
 
       lastStatus = data.status;

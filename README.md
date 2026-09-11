@@ -14,22 +14,23 @@
 
 ## ダウンロード
 
-[**最新版をダウンロード**](https://github.com/panpanpanda7/Glance/releases/latest)（`Glance.Setup.x.y.z.exe`）
+[**Glance をダウンロード（Windows 用インストーラ、約 120MB）**](https://github.com/panpanpanda7/Glance/releases/latest/download/Glance-Setup.exe)
+
+このリンクを押すと、最新版のインストーラ `Glance-Setup.exe` のダウンロードがすぐに始まります。
+GitHub のアカウントやログインは必要ありません。
 
 ### 動作条件
 
-| 項目 | 条件 |
-|---|---|
-| OS | Windows 10 / 11（64ビット） |
-| メモリ | 8GB 以上 |
-| 空き容量 | 約 3GB（アプリ本体 + AI モデル） |
-| インターネット | 初回起動時のみ必要（AI モデルのダウンロード） |
+- OS: Windows 10 または Windows 11（64ビット）
+- メモリ: 8GB 以上
+- 空き容量: 約 3GB（アプリ本体と AI モデルの合計）
+- インターネット: 初回起動時のみ必要（AI モデルのダウンロードのため）
 
 グラフィックス機能があれば自動的に使用して高速化します。無い場合も CPU で動作します。
 
 ### インストール手順
 
-1. 上のリンクから `Glance.Setup.x.y.z.exe` をダウンロードします。
+1. 上のリンクから `Glance-Setup.exe` をダウンロードします。
 2. ダウンロードしたファイルを実行します。
 3. **「WindowsによってPCが保護されました」という青い画面が出た場合**、次の操作で進めてください。
    これは、開発者証明書を購入していない個人開発のアプリすべてに出る警告で、
@@ -164,6 +165,15 @@ Windows のテスターへは `glance-pyapp/setup-first-time.bat`（初回）と
    インストーラと `latest.yml` を Releases へ添付します
 
 `latest.yml` が electron-updater の更新元です。これが欠けると自動更新が止まります。
+
+リリース本文は CI が組み立てます。先頭にダウンロード案内（対象ファイル名と恒久リンク）を
+日本語で置き、その後ろに GitHub の自動生成の変更履歴が付きます。利用者向けの変更点を
+書きたいときは `docs/release-notes/vX.Y.Z.md` を用意してください。あれば案内の直後に
+差し込まれます。自動生成のコミット一覧をそのまま先頭に出さないための仕組みです。
+
+インストーラは `Glance-Setup-X.Y.Z.exe` として作られ、CI が `Glance-Setup.exe` という
+バージョン無しの複製も一緒に添付します。README のダウンロードリンクはこちらを指している
+ため、リリースのたびに書き換える必要はありません。
 
 ### API
 

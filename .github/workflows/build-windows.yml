@@ -9,6 +9,23 @@ on:
 permissions:
   contents: write
 
+env:
+  # 同梱する llama.cpp のリリースタグ。
+  #
+  # ggml-org/llama.cpp のバイナリ入りリリース（b#####）は全て prerelease 扱いで、
+  # GitHub の releases/latest はそれらを飛ばす。2026-09-04 に nightly-tag.txt しか
+  # 持たない v0.4.0 が非 prerelease で作られてからは、latest がそれを返すように
+  # なり、ビルドが「Windows x64 バイナリが見つかりません」で落ちるようになった。
+  #
+  # 併せてタグを固定する。ここが浮動だと、同じ v0.3.0 を再ビルドしただけで
+  # 利用者の手元に載る推論エンジンが変わりうる。画面を見て切り分けられない
+  # 利用者に配る以上、配布物は再現可能にしておく。
+  #
+  # 上げるときは、実機で一度起動を確認してから上げること。
+  # 新しいものを試したいだけなら latest を入れると、資産を持つ最新の
+  # リリースを自動で探す。
+  LLAMA_CPP_TAG: b10901
+
 jobs:
   build:
     runs-on: windows-latest
@@ -33,21 +50,56 @@ jobs:
 
     # 1.5 llama-server.exe をダウンロード
     - name: Download llama-server binary
+      env:
+        # Actions は secrets を自動で env に入れないので明示的に渡す。
+        # 空のまま Authorization ヘッダを送ると 401 になる。
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Windows 用 llama.cpp バイナリをダウンロード（最新リリース）
+        # Windows 用 llama.cpp バイナリをダウンロード（LLAMA_CPP_TAG で固定）
         Write-Host "========== llama-server.exe ダウンロード開始 =========="
         
-        # GitHub API で最新リリース情報を取得
-        Write-Host "📥 GitHub API から最新リリース情報を取得中..."
-        try {
-          $response = Invoke-WebRequest -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers @{"Accept"="application/vnd.github.v3+json"}
-          $latestRelease = $response.Content | ConvertFrom-Json
-          Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
-        } catch {
-          Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
-          Write-Host $_.Exception.Message
-          exit 1
+        # GitHub API でリリース情報を取得する。
+        # releases/latest は使わない（上の LLAMA_CPP_TAG のコメントを参照）。
+        $apiBase = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+        $headers = @{
+          "Accept" = "application/vnd.github.v3+json"
+          # 素の api.github.com はランナーの共有 IP ごとに時間 60 回しか許されず、
+          # 混み合った時間帯に不定期に落ちる。トークンを付けて回避する。
+          "Authorization" = "Bearer $env:GITHUB_TOKEN"
         }
+        $assetPattern = "bin-win-vulkan-x64.*\.zip$"
+        $latestRelease = $null
+
+        if ($env:LLAMA_CPP_TAG -eq "latest") {
+          Write-Host "📥 資産を持つ最新のリリースを検索中（prerelease を含む）..."
+          try {
+            $releases = Invoke-RestMethod -Uri "$($apiBase)?per_page=30" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+          foreach ($r in $releases) {
+            if ($r.assets | Where-Object { $_.name -match $assetPattern }) {
+              $latestRelease = $r
+              break
+            }
+          }
+          if (-not $latestRelease) {
+            Write-Host "❌ ERROR: 直近 30 件のリリースに Windows x64 の資産がありません"
+            exit 1
+          }
+        } else {
+          Write-Host "📥 固定タグのリリース情報を取得中: $($env:LLAMA_CPP_TAG)"
+          try {
+            $latestRelease = Invoke-RestMethod -Uri "$apiBase/tags/$($env:LLAMA_CPP_TAG)" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: タグ $($env:LLAMA_CPP_TAG) のリリースを取得できません"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+        }
+        Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
         
         # Assets 一覧をログ出力して確認
         Write-Host "📋 利用可能な assets:"
@@ -189,7 +241,7 @@ jobs:
         } else {
           Write-Host "❌ ERROR: llama-server.exe が展開後のアーカイブに見つかりません"
           Write-Host "展開後のディレクトリ構造:"
-          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object FullName | Head -20
+          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object -First 20 FullName
           exit 1
         }
         
@@ -486,6 +538,72 @@ jobs:
           glance-pyapp/electron/dist/latest.yml
         retention-days: 14
 
+    # 5.7 バージョンを含まない複製を作る
+    #     README のリンクを毎リリース書き換えずに済ませるため。
+    #     /releases/latest/download/<資産名> は資産名の完全一致を要求するので、
+    #     名前にバージョンが入っていると恒久リンクにできない。
+    #     自動更新は latest.yml が指すバージョン付きの方を使うため、この複製を
+    #     増やしても更新処理には影響しない。
+    - name: Create version-less installer copy
+      working-directory: ./glance-pyapp/electron
+      run: |
+        $installer = Get-ChildItem dist -Filter 'Glance-Setup-*.exe' | Select-Object -First 1
+        if (-not $installer) {
+          Write-Host "[ERROR] Glance-Setup-*.exe が見つかりません"
+          exit 1
+        }
+        Copy-Item $installer.FullName -Destination dist/Glance-Setup.exe -Force
+        Write-Host "恒久リンク用の複製を作成しました: Glance-Setup.exe ($($installer.Name) より)"
+
+    # 5.8 リリース本文の組み立て
+    #     generate_release_notes が作るのは英語のコミット一覧で、利用者が最初に
+    #     読む文章としては不向き。日本語の案内を先頭に置き、自動生成の変更履歴は
+    #     その後ろへ回す（GitHub は渡した本文の後に追記する）。
+    #     docs/release-notes/<タグ>.md があれば、その手書きノートも差し込む。
+    - name: Compose release notes
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $version = $tag -replace '^v', ''
+        $installer = "Glance-Setup-$version.exe"
+
+        # 逐語ヒアストリング。バックティックや $ を PowerShell に解釈させない。
+        $template = @'
+        ## ダウンロード
+
+        **__INSTALLER__** をダウンロードして実行してください。
+        下の Assets の一覧にあります。ほかのファイルは自動更新用のため、ダウンロードは不要です。
+
+        いつでも最新版を直接ダウンロードできるリンク:
+        https://github.com/panpanpanda7/Glance/releases/latest/download/Glance-Setup.exe
+
+        ## はじめての方へ
+
+        インストール手順、動作条件、「WindowsによってPCが保護されました」と表示された
+        ときの操作方法は、README に書いてあります。
+        https://github.com/panpanpanda7/Glance
+
+        初回起動時に AI モデル（約1.9GB）を自動でダウンロードします。
+        進み具合は音声でお知らせしますので、完了までそのままお待ちください。
+        '@
+
+        $body = $template.Replace('__INSTALLER__', $installer)
+
+        $notePath = "docs/release-notes/$tag.md"
+        if (Test-Path $notePath) {
+          Write-Host "手書きのリリースノートを読み込みます: $notePath"
+          $body = $body + [Environment]::NewLine + [Environment]::NewLine + (Get-Content $notePath -Raw)
+        } else {
+          Write-Host "手書きのリリースノートはありません: $notePath"
+        }
+
+        # BOM 付きで書くとリリース本文の先頭に余計な文字が出る。
+        # -Encoding utf8 の意味が PowerShell 5.1 と 7 で違うので、明示的に書く。
+        $outPath = Join-Path $PWD 'release-body.md'
+        [System.IO.File]::WriteAllText($outPath, $body, (New-Object System.Text.UTF8Encoding $false))
+        Write-Host "---------- release-body.md ----------"
+        Get-Content release-body.md
+
     # 6. 生成されたインストーラーをリリースにアップロード
     - name: Release
       uses: softprops/action-gh-release@v1
@@ -495,6 +613,7 @@ jobs:
           glance-pyapp/electron/dist/*.exe
           glance-pyapp/electron/dist/*.zip
           glance-pyapp/electron/dist/latest.yml
+        body_path: release-body.md
         draft: false
         prerelease: false
         generate_release_notes: true

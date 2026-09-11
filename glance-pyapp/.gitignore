@@ -54,3 +54,10 @@ test_images/
 *.png
 *.jpg
 *.jpeg
+
+# アプリアイコンだけは *.png の例外にする。electron-builder は icon が
+# 無くても警告だけで既定の Electron アイコンのまま完走するため、
+# コミットし忘れても手元のビルドでは気づけない。
+# （git は最後に一致した規則が勝つので、*.png より後ろに置くこと）
+!electron/build/icon.png
+!electron/build/icon.ico

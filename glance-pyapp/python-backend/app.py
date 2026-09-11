@@ -281,8 +281,46 @@ app_state = {
     "status": "initializing",  # initializing, downloading, loading_model, ready, error
     "progress": 0,             # ダウンロード進捗 (0-100)
     "message": "起動準備中...",
-    "detail": ""
+    "detail": "",
+
+    # --- 初回ダウンロードの読み上げ用 ---
+    # 画面を見られない利用者にとって、初回起動の数GBのダウンロードは
+    # 「無音のまま十数分止まる」時間になる。フリーズと区別がつかず強制終了されると
+    # .part が捨てられて最初からやり直しになるため、いま何を・どこまで・
+    # あと何分やっているかを読み上げられるだけの材料をすべてここに載せる。
+    "phase_label": "",         # いま取得しているものの名前（「AIモデル」など）
+    "step": 0,                 # 何個目のファイルか（1始まり）
+    "total_steps": 0,          # 取得するファイルの総数
+    "downloaded_bytes": 0,
+    "total_bytes": 0,          # いま取得中のファイルのサイズ
+    "overall_total_bytes": 0,  # 今回落とすファイルの合計サイズ
+    "speed_bps": 0,            # 直近の実効速度（バイト/秒）
+    "eta_seconds": None,       # 残り時間の推定。速度が測れないうちは None
+    "attempt": 1,              # 何回目の試行か
+    "max_attempts": 0,
+    # 最後に値を更新した時刻（epoch秒）。回線が無言で切れると download_file は
+    # 読み込みでブロックし、app_state が凍ったままになる。受信側はこの時刻の
+    # 古さを見て「進んでいない」ことを検知する。
+    "updated_at": 0.0,
 }
+
+
+def reset_download_state(label, step, total_steps, total_bytes=0):
+    """ダウンロード1本ぶんの状態を初期化する"""
+    app_state["status"] = "downloading"
+    app_state["message"] = f"{label}をダウンロードしています..."
+    app_state["progress"] = 0
+    app_state["detail"] = ""
+    app_state["phase_label"] = label
+    app_state["step"] = step
+    app_state["total_steps"] = total_steps
+    app_state["downloaded_bytes"] = 0
+    app_state["total_bytes"] = total_bytes or 0
+    app_state["speed_bps"] = 0
+    app_state["eta_seconds"] = None
+    app_state["attempt"] = 1
+    app_state["max_attempts"] = DOWNLOAD_RETRIES
+    app_state["updated_at"] = time.time()
 
 
 def get_writable_model_path():
@@ -330,7 +368,8 @@ def model_file_is_usable(path, expected_size=None):
 
 
 def download_file(url, dest_path, file_description="ファイル",
-                  expected_sha256=None, expected_size=None):
+                  expected_sha256=None, expected_size=None,
+                  step=0, total_steps=0):
     """
     進捗状況を更新しながらファイルをダウンロードする
 
@@ -349,9 +388,18 @@ def download_file(url, dest_path, file_description="ファイル",
     last_error = None
 
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        app_state["attempt"] = attempt
+        app_state["max_attempts"] = DOWNLOAD_RETRIES
+        app_state["updated_at"] = time.time()
+
         if attempt > 1:
             print(f"   🔁 {file_description}のダウンロードを再試行します（{attempt}/{DOWNLOAD_RETRIES}）")
             app_state["detail"] = f"再試行中（{attempt}/{DOWNLOAD_RETRIES}）"
+            # 再試行では先頭から取り直すので、進捗も巻き戻したことを伝える
+            app_state["progress"] = 0
+            app_state["downloaded_bytes"] = 0
+            app_state["speed_bps"] = 0
+            app_state["eta_seconds"] = None
 
         try:
             print(f"📥 {file_description}をダウンロード中: {url}")
@@ -362,12 +410,41 @@ def download_file(url, dest_path, file_description="ファイル",
             last_reported_progress = -1  # 最後に表示した進捗を記録
             hasher = hashlib.sha256()
 
+            app_state["phase_label"] = file_description
+            app_state["step"] = step
+            app_state["total_steps"] = total_steps
+            app_state["total_bytes"] = total_size
+
+            # 残り時間は「直近 SPEED_WINDOW 秒の実効速度」から出す。全体平均だと
+            # 回線が細くなったときに楽観的な数字を言い続けることになり、
+            # 待つと決めた利用者の判断材料にならない。
+            SPEED_WINDOW = 5.0
+            window_start_time = time.time()
+            window_start_bytes = 0
+
             with open(part_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
                         hasher.update(chunk)
                         downloaded_size += len(chunk)
+
+                        now = time.time()
+                        elapsed = now - window_start_time
+                        if elapsed >= SPEED_WINDOW:
+                            speed = (downloaded_size - window_start_bytes) / elapsed
+                            app_state["speed_bps"] = int(speed)
+                            if speed > 0 and total_size > 0:
+                                remaining = max(0, total_size - downloaded_size)
+                                app_state["eta_seconds"] = int(remaining / speed)
+                            window_start_time = now
+                            window_start_bytes = downloaded_size
+
+                        app_state["downloaded_bytes"] = downloaded_size
+                        # 受信が続いている限りここが更新される。逆にここが古いまま
+                        # なら回線が無言で止まっているということ。
+                        app_state["updated_at"] = now
+
                         if total_size > 0:
                             progress = int((downloaded_size / total_size) * 100)
                             # 進捗をグローバル変数に反映
@@ -484,16 +561,27 @@ def initialize_system():
         mmproj_sha256 = active_model_config.get('mmproj_sha256')
         mmproj_size = active_model_config.get('mmproj_size')
 
-        if not model_file_is_usable(model_path, model_size):
+        # 何本落とすのかを先に確定させる。「2つのうち1つ目」と言えないと、
+        # 進捗が 100% まで行ってから 0% に戻る場面で、聞いている側は
+        # 失敗してやり直したのか次に進んだのか区別できない。
+        model_needed = not model_file_is_usable(model_path, model_size)
+        mmproj_needed = not model_file_is_usable(mmproj_path, mmproj_size)
+        total_steps = int(model_needed) + int(mmproj_needed)
+        current_step = 0
+        app_state["overall_total_bytes"] = (
+            (model_size or 0 if model_needed else 0)
+            + (mmproj_size or 0 if mmproj_needed else 0)
+        )
+
+        if model_needed:
             print(f"   📥 モデルファイルを取得します: {model_path}")
-            app_state["status"] = "downloading"
-            app_state["message"] = "AIモデルをダウンロードしています..."
-            app_state["progress"] = 0
-            app_state["detail"] = ""
+            current_step += 1
+            reset_download_state("AIモデル", current_step, total_steps, model_size)
 
             try:
                 download_file(model_download_url, model_path, "AIモデル",
-                              expected_sha256=model_sha256, expected_size=model_size)
+                              expected_sha256=model_sha256, expected_size=model_size,
+                              step=current_step, total_steps=total_steps)
                 print(f"   ✅ モデルファイルのダウンロード完了")
             except Exception as e:
                 print(f"   ❌ モデルファイルのダウンロードに失敗: {e}")
@@ -501,16 +589,15 @@ def initialize_system():
         else:
             print(f"   ✅ モデルファイルが存在します: {model_path}")
 
-        if not model_file_is_usable(mmproj_path, mmproj_size):
+        if mmproj_needed:
             print(f"   📥 mmproj ファイルを取得します: {mmproj_path}")
-            app_state["status"] = "downloading"
-            app_state["message"] = "画像処理エンジンをダウンロードしています..."
-            app_state["progress"] = 0
-            app_state["detail"] = ""
+            current_step += 1
+            reset_download_state("画像処理エンジン", current_step, total_steps, mmproj_size)
 
             try:
                 download_file(mmproj_download_url, mmproj_path, "画像処理エンジン",
-                              expected_sha256=mmproj_sha256, expected_size=mmproj_size)
+                              expected_sha256=mmproj_sha256, expected_size=mmproj_size,
+                              step=current_step, total_steps=total_steps)
                 print(f"   ✅ mmproj ファイルのダウンロード完了")
             except Exception as e:
                 print(f"   ❌ mmproj ファイルのダウンロードに失敗: {e}")
@@ -524,6 +611,9 @@ def initialize_system():
         app_state["message"] = "AIを起動しています..."
         app_state["progress"] = 100
         app_state["detail"] = ""
+        app_state["eta_seconds"] = None
+        app_state["speed_bps"] = 0
+        app_state["updated_at"] = time.time()
         
         print(f"\n{'='*60}")
         print(f"📦 モデルをロード中: {active_model_name}")
