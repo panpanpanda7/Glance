@@ -1,6 +1,6 @@
 {
   "name": "glance-pyapp",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Glance - 視覚障害者向けPC画面読み上げアプリ",
   "repository": {
     "type": "git",
