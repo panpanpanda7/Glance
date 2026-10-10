@@ -670,7 +670,8 @@ async function waitForPythonBackend() {
       if (pythonExitCode !== null) {
         throw new Error(
           `別の Glance が既に起動しているようです（このプロセスは終了コード ${pythonExitCode} で終了）。\n` +
-          `update-and-run.bat から起動し直すと、残ったプロセスを停止してからクリーンに起動します。`
+          `Glance を終了して、もう一度起動してください。\n` +
+          `直らないときは、パソコンを再起動してから Glance を起動してください。`
         );
       }
 
@@ -1473,9 +1474,8 @@ async function handleQuestionAnalysis(questionText) {
 /**
  * 自動更新（インストーラ版のみ）
  *
- * 開発と、テスターの git clone + update-and-run.bat 経由の起動では
- * app.isPackaged が false になるので、この関数は何もせずに戻る。
- * そちらの更新は今までどおり git pull が担当する。
+ * 開発時（npm run dev）の起動では app.isPackaged が false になるので、
+ * この関数は何もせずに戻る。
  *
  * インストーラ版では GitHub Releases の latest.yml を見て、新しい版が
  * あれば黙ってダウンロードし、次にアプリを終了したときに適用する。

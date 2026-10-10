@@ -512,7 +512,7 @@ def initialize_system():
         print("="*60 + "\n")
         
         # 1. アクティブモデルを取得。環境変数 GLANCE_MODEL が config より優先
-        # （update-and-run-light.bat 等の「別起動」でモデルを切り替えるための仕組み。
+        # （開発時に、起動ごとにモデルを切り替えて検証するための仕組み。
         #  実行時切替だと2モデル分のRAMを食うため、起動時に1つだけ選ぶ）
         print("📋 [ステップ1] アクティブモデルの確認...")
         env_model = os.environ.get('GLANCE_MODEL')

@@ -534,8 +534,8 @@ class Qwen3VLServerModel(VisionLanguageModel):
                         f"  起動中のモデル: {served}\n"
                         f"  想定するモデル: {self.model_path}\n\n"
                         f"前回の Glance が正しく終了できなかった可能性があります。\n"
-                        f"update-and-run.bat（または update-and-run-light.bat）から起動し直すと、\n"
-                        f"残ったプロセスを自動で停止してからクリーンに起動します。"
+                        f"Glance を終了して、もう一度起動してください。\n"
+                        f"直らないときは、パソコンを再起動してから Glance を起動してください。"
                     )
                 print(f"✅ llama-server は既に起動しています（モデル一致を確認）")
                 self.health_checked = True
