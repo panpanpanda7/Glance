@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline';
+                 style-src 'self' 'unsafe-inline';
+                 connect-src 'self' http://127.0.0.1:*;">
+  <title>Glance - AI画面読み上げ</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      padding: 14px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .container {
+      max-width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ヘッダー（タイトル + ステータス1行） */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .topbar h1 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      opacity: 0.9;
+      min-width: 0;
+    }
+
+    .status-indicator span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-dot.idle {
+      background-color: #10b981;
+    }
+
+    .status-dot.loading,
+    .status-dot.connecting {
+      background-color: #f59e0b;
+    }
+
+    .status-dot.capturing,
+    .status-dot.analyzing,
+    .status-dot.speaking {
+      background-color: #3b82f6;
+    }
+
+    .status-dot.error {
+      background-color: #ef4444;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    /* 簡素な操作説明 */
+    .hotkey-hint {
+      text-align: center;
+      font-size: 14px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .hotkey-hint kbd {
+      font-family: inherit;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+
+    /* チャット（認識結果ウィンドウ） */
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .no-result {
+      margin: auto;
+      text-align: center;
+      opacity: 0.6;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 85%;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .msg.ai {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble {
+      background: #06c755;
+      color: #fff;
+      border-top-right-radius: 4px;
+    }
+
+    .msg.ai .bubble {
+      background: rgba(255, 255, 255, 0.95);
+      color: #333;
+      border-top-left-radius: 4px;
+    }
+
+    .msg.ai.guide .bubble {
+      background: rgba(255, 235, 170, 0.95);
+      color: #4a3b00;
+    }
+
+    .msg.ai.error .bubble {
+      background: rgba(255, 220, 220, 0.95);
+      color: #8a1f1f;
+    }
+
+    .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      opacity: 0.75;
+      margin-top: 4px;
+    }
+
+    .speak-btn {
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border-radius: 12px;
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .speak-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .speak-btn.speaking {
+      background: #ef4444;
+      border-color: #ef4444;
+    }
+
+    /* 画面切り替え（メイン⇔設定）
+       設定はメインに重ねず、画面そのものを入れ替える。
+       重なって出ると、画面が見えない利用者は今どちらにいるのか分からなくなる */
+    [hidden] {
+      display: none !important;
+    }
+
+    .view {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .settings-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    /* 設定画面を開いたときに見出しへフォーカスを移すが、枠線は出さない */
+    .settings-header h2:focus {
+      outline: none;
+    }
+
+    .settings-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    /* 説明書。行間を広めに取り、章の見出しを目で追いやすくする */
+    .manual-body {
+      gap: 6px;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .manual-body h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+
+    .manual-body h3:first-child {
+      margin-top: 0;
+    }
+
+    .manual-body .manual-indent {
+      padding-left: 1.5em;
+    }
+
+
+    .advanced-hint {
+      font-size: 12px;
+      opacity: 0.8;
+      line-height: 1.6;
+    }
+
+    /* 設定行 */
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .settings-row label {
+      font-size: 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .settings-row select {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      color: #fff;
+      font-size: 12px;
+      padding: 4px 8px;
+      cursor: pointer;
+      appearance: auto;
+    }
+
+    .settings-row select option {
+      background: #5a4a8a;
+      color: #fff;
+    }
+
+    .settings-row input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 8px;
+    }
+
+    .settings-row input[type="text"]:focus {
+      outline: 2px solid rgba(255, 255, 255, 0.8);
+      outline-offset: 1px;
+    }
+
+    .hotkey-settings {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 8px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hotkey-settings legend {
+      font-size: 12px;
+      padding: 0 4px;
+      opacity: 0.9;
+    }
+
+    .hotkey-settings kbd,
+    .hotkey-settings code {
+      font-family: inherit;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+
+    .hotkey-actions {
+      justify-content: flex-end;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .btn-inline {
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 6px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 5px 12px;
+      cursor: pointer;
+    }
+
+    .btn-inline:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* 右上の設定ボタン／設定画面の戻るボタン */
+    .btn-nav {
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 8px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    .btn-nav:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-nav:focus-visible {
+      outline: 3px solid #ffd93d;
+      outline-offset: 2px;
+    }
+
+    /* ご意見・不具合を送る画面。ラベルを入力欄の上に置き、長文も書けるようにする */
+    .feedback-form {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .feedback-form label {
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    .feedback-form textarea,
+    .feedback-form input[type="text"] {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 10px;
+    }
+
+    .feedback-form textarea {
+      min-height: 140px;
+      resize: vertical;
+      line-height: 1.6;
+    }
+
+    .feedback-form textarea:focus,
+    .feedback-form input[type="text"]:focus {
+      outline: 2px solid rgba(255, 255, 255, 0.8);
+      outline-offset: 1px;
+    }
+
+    /* 連絡先の欄の説明に見えないよう、チェックの説明の前を空ける */
+    .feedback-form .feedback-group {
+      margin-top: 14px;
+    }
+
+    .feedback-form .feedback-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .feedback-form .feedback-check label {
+      margin-top: 0;
+    }
+
+    .feedback-form button[type="submit"] {
+      align-self: flex-start;
+      margin-top: 8px;
+      font-size: 14px;
+      padding: 8px 20px;
+    }
+
+    .feedback-form button[disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* スクリーンリーダーにだけ読ませ、画面には出さない
+       （display:none や visibility:hidden では読み上げ対象から外れてしまう） */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* キーボードで選択中のメッセージ。
+       時刻（.msg-meta）まで枠に含めないと、どこからどこまでが
+       1件の認識結果なのか分からなくなる */
+    .msg:focus {
+      outline: 3px solid #ffd93d;
+      outline-offset: 3px;
+      border-radius: 18px;
+    }
+
+    .msg:focus .msg-meta {
+      opacity: 1;
+      font-weight: 700;
+    }
+
+    /* 起動ログエリア */
+    #startup-logs {
+      background: #000;
+      color: #00ff00;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      height: 90px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      line-height: 1.4;
+    }
+
+    #startup-logs::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #startup-logs::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    #startup-logs::-webkit-scrollbar-thumb {
+      background: rgba(0, 255, 0, 0.5);
+      border-radius: 4px;
+    }
+
+    #startup-logs::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 255, 0, 0.7);
+    }
+
+    /* 質問モーダル */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(5px);
+    }
+
+    .modal-content {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 15% auto;
+      padding: 30px;
+      border-radius: 15px;
+      width: 80%;
+      max-width: 500px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .modal h3 {
+      margin-bottom: 10px;
+      font-size: 20px;
+      text-align: center;
+    }
+
+    .modal-subtitle {
+      text-align: center;
+      font-size: 14px;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+
+    #question-input {
+      width: 100%;
+      height: 100px;
+      padding: 15px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      background: rgba(255, 255, 255, 0.9);
+      color: #333;
+      resize: vertical;
+      margin-bottom: 20px;
+    }
+
+    #question-input:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .modal-buttons button {
+      flex: 0 0 auto;
+      padding: 12px 24px;
+      min-width: 100px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #fff;
+    }
+
+    .modal-buttons button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="topbar">
+      <h1>Glance</h1>
+      <div class="status-indicator">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">起動中...</span>
+      </div>
+      <!-- 「説明書」「設定」と「戻る」は同じ場所（右上）に置き、画面に応じて入れ替える -->
+      <div class="topbar-actions">
+        <button type="button" id="manual-open" class="btn-nav">説明書（F1）</button>
+        <button type="button" id="feedback-open" class="btn-nav">ご意見を送る</button>
+        <button type="button" id="settings-open" class="btn-nav">⚙ 設定</button>
+        <button type="button" id="settings-back" class="btn-nav" hidden>← 戻る</button>
+      </div>
+    </header>
+
+    <main class="view" id="main-view">
+      <p class="hotkey-hint" id="hotkey-hint"><kbd>Ctrl+Shift+G</kbd> で今の画面を認識して説明します</p>
+
+      <!--
+        チャット本体には aria-live を付けない。ストリーミングで本文を書き換える
+        たびに領域全体が再読み上げの対象になり、スクリーンリーダーが最初の一回を
+        読んだあと後続をキューから落としてしまうため（継続出力が読まれない原因）。
+        読み上げは下の #sr-announcer へ「新しく確定した文だけ」を追記する。
+      -->
+      <div class="chat" id="chat" role="log" tabindex="0"
+           aria-label="認識結果の履歴。Altを押しながら上下キーで1件ずつ移動できます">
+        <div class="no-result" id="no-result">
+          Ctrl+Shift+G を押すと、<br>ここに認識結果が表示されます
+        </div>
+      </div>
+    </main>
+
+    <!-- スクリーンリーダー専用。画面には表示せず、確定した文だけを流す -->
+    <div id="sr-announcer" class="visually-hidden" role="status"
+         aria-live="polite" aria-atomic="false"></div>
+
+    <!--
+      設定は「別の画面」として開く。メイン画面に重ねると、画面が見えない
+      利用者にはどちらを操作しているのか分からず混乱するため。
+      Esc または「戻る」で認識結果の画面へ戻る。
+    -->
+    <section class="view" id="settings-view" hidden aria-labelledby="settings-title">
+      <div class="settings-header">
+        <h2 id="settings-title" tabindex="-1">設定</h2>
+      </div>
+      <div class="settings-body">
+        <fieldset class="hotkey-settings">
+          <legend>読み上げ</legend>
+          <div class="settings-row">
+            <label for="tts-mode-select">読み上げ方法</label>
+            <select id="tts-mode-select">
+              <option value="builtin">Glanceが読み上げる（推奨）</option>
+              <option value="system">Glanceが読み上げる（OS標準の音声合成）</option>
+              <option value="off">読み上げない（スクリーンリーダーに任せる）</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label for="tts-voice-select">音声</label>
+            <select id="tts-voice-select">
+              <option value="">自動選択</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label for="tts-rate-select">読み上げ速度</label>
+            <select id="tts-rate-select">
+              <option value="1.0">標準</option>
+              <option value="1.3">やや速い</option>
+              <option value="1.5">速い</option>
+              <option value="1.8">とても速い</option>
+              <option value="2.2">最速</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label for="tts-autoread">結果を自動で読み上げる</label>
+            <input type="checkbox" id="tts-autoread" checked>
+          </div>
+          <div class="settings-row hotkey-actions">
+            <button type="button" id="tts-test" class="btn-inline">読み上げをテスト</button>
+          </div>
+          <p id="tts-status" class="advanced-hint" role="status" aria-live="polite"></p>
+        </fieldset>
+
+        <fieldset class="hotkey-settings">
+          <legend>ホットキー</legend>
+          <p class="advanced-hint">
+            他のアプリやスクリーンリーダーと重なる場合は変更してください。
+            <kbd>Ctrl</kbd>や<kbd>Shift</kbd>と英数字を <code>+</code> でつないで入力します（例: Ctrl+Shift+G）。
+          </p>
+          <div class="settings-row">
+            <label for="hotkey-capture">画面を説明</label>
+            <input type="text" id="hotkey-capture" data-hotkey="capture" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-overview">画面をひとことで</label>
+            <input type="text" id="hotkey-overview" data-hotkey="overview" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-prepare">事前キャプチャ</label>
+            <input type="text" id="hotkey-prepare" data-hotkey="prepare" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-detailed">詳しく説明</label>
+            <input type="text" id="hotkey-detailed" data-hotkey="detailed" spellcheck="false">
+          </div>
+          <div class="settings-row">
+            <label for="hotkey-question">画面へ質問</label>
+            <input type="text" id="hotkey-question" data-hotkey="question" spellcheck="false">
+          </div>
+          <div class="settings-row hotkey-actions">
+            <button type="button" id="hotkey-save" class="btn-inline">ホットキーを保存</button>
+            <button type="button" id="hotkey-reset" class="btn-inline">既定に戻す</button>
+          </div>
+          <p id="hotkey-status" class="advanced-hint" role="status" aria-live="polite"></p>
+        </fieldset>
+        <fieldset class="hotkey-settings">
+          <legend>画像</legend>
+          <div class="settings-row">
+            <label for="image-size-select">画像解像度</label>
+            <select id="image-size-select">
+              <option value="448">448px — 速い・低精度 (×16)</option>
+              <option value="672">672px — バランス (×24)</option>
+              <option value="896">896px — 標準・推奨 (×32)</option>
+              <option value="1120">1120px — 高精度 (×40)</option>
+              <option value="1344">1344px — 最高精度・遅い (×48)</option>
+              <option value="none">原寸 — リサイズなし</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset class="hotkey-settings">
+          <legend>起動ログ</legend>
+          <div id="startup-logs">ログ待機中...</div>
+        </fieldset>
+      </div>
+      <p class="advanced-hint">Esc キー、または右上の「戻る」ボタンで、認識結果の画面に戻ります。</p>
+    </section>
+
+    <!--
+      ご意見・不具合を送る。GitHub の Issue はアカウント作成と画面の操作が
+      難しかったため、ここから Google フォームへ直接送る（utils/feedback.js）。
+      画面の画像と説明の文は送らない。
+    -->
+    <section class="view" id="feedback-view" hidden aria-labelledby="feedback-title">
+      <div class="settings-header">
+        <h2 id="feedback-title" tabindex="-1">ご意見・不具合を送る</h2>
+      </div>
+      <div class="settings-body">
+        <p class="advanced-hint" id="feedback-desc">
+          開発者に届きます。画面の画像と説明の文は送りません。
+        </p>
+        <!-- 補足は入力欄の前に置く。後ろにあると、書き終えてから読むことになる -->
+        <form class="feedback-form" id="feedback-form" novalidate aria-describedby="feedback-desc">
+          <label for="feedback-message">内容（必須）</label>
+          <p class="advanced-hint" id="feedback-message-hint">どの画面で、何をしたら、どうなったか。</p>
+          <textarea id="feedback-message" required
+                    aria-describedby="feedback-message-hint"></textarea>
+
+          <label for="feedback-contact">連絡先（返事がほしい場合だけ）</label>
+          <input type="text" id="feedback-contact" spellcheck="false" autocomplete="email">
+
+          <p class="advanced-hint feedback-group" id="feedback-diagnostics-hint">
+            Glance の版、パソコンの性能、直近の動作の記録を送ってよい場合は、下のチェックを入れてください。不具合の原因を調べるのに使います。
+          </p>
+          <div class="feedback-check">
+            <input type="checkbox" id="feedback-diagnostics"
+                   aria-describedby="feedback-diagnostics-hint">
+            <label for="feedback-diagnostics">パソコンの情報を添える</label>
+          </div>
+
+          <button type="submit" id="feedback-submit" class="btn-inline">送る</button>
+        </form>
+        <p id="feedback-status" class="advanced-hint" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <!-- 説明書。本文は docs/manual.txt から renderer.js が組み立てる -->
+    <section class="view" id="manual-view" hidden aria-labelledby="manual-title">
+      <div class="settings-header">
+        <h2 id="manual-title" tabindex="-1">説明書</h2>
+      </div>
+      <div class="settings-body manual-body" id="manual-body"></div>
+    </section>
+  </div>
+
+  <!-- 質問モーダル -->
+  <div id="question-modal" class="modal">
+    <div class="modal-content">
+      <h3>💬 画像への質問</h3>
+      <p class="modal-subtitle">直前にキャプチャした画面について質問してください</p>
+
+      <textarea id="question-input" placeholder="例: 画面上のグラフの最大値は何ですか？&#10;画面中央の表の合計値を教えて&#10;このウェブサイトのメニュー項目は何がありますか？"></textarea>
+
+      <div class="modal-buttons">
+        <button id="question-cancel" class="btn-secondary">キャンセル</button>
+        <button id="question-submit" class="btn-primary">質問する</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

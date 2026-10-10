@@ -1,0 +1,3 @@
+# 説明書はメールで送ったり Windows のメモ帳で開いたりするので、
+# BOM 付き UTF-8・CRLF のまま一切変換しない
+docs/manual.txt -text

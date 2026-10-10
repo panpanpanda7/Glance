@@ -1,0 +1,448 @@
+# Glance Python Backend Configuration
+# モデル設定とプロンプト
+
+# 既定は Qwen3.5 2B（高速モード）。低スペックの仕事PCでも実用速度で動くこと、
+# テスターの検証が update-and-run-light.bat 経由（= このモデル）で行われて
+# いることから、配布版の既定をこちらにしている。
+# 精度重視で 4B を使いたい場合は環境変数で切り替える:
+#   set GLANCE_MODEL=qwen3-vl-4b-server
+#
+# 切替候補:
+# activeModel: qwen3-vl-4b-server   … 精度は一段上。RAM 8GB・約2.8GB DL
+# activeModel: qwen2_5-vl-3b-gguf   … llama-cpp-python 直叩き（開発用）
+# activeModel: internvl-3_5-4b-gguf … 旧経路（開発用）
+activeModel: qwen3_5-2b-server
+
+models:
+  # # ===== GGUF量子化モデル（推奨）=====
+  # internvl-3_5-1b-gguf:
+  #   name: InternVL 3.5 1B GGUF (Q4_K_M)
+  #   type: internvl_gguf
+  #   path: models/gguf/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf
+  #   mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-1B-f16.gguf
+  #   download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-1B-GGUF/resolve/main/OpenGVLab_InternVL3_5-1B-Q4_K_M.gguf?download=true
+  #   mmproj_download_url: https://huggingface.co/QuantStack/InternVL3_5-1B-Instruct-gguf/resolve/main/mmproj-InternVL3_5-1B-Instruct-f16.gguf?download=true
+  #   precision: high
+  #   estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+  #   ramRequired: 2GB (CPU)
+  #   speculativeDecoding: LlamaPromptLookupDecoding
+
+  # ===== Qwen2.5-VL GGUF量子化モデル（推奨）=====
+  qwen2_5-vl-3b-gguf:
+    name: Qwen2.5 VL 3B GGUF (Q4_K_M + Q8_0 mmproj)
+    type: qwen_vl_gguf
+    path: models/gguf/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
+    download_url: https://huggingface.co/Taoufik/Qwen2.5-VL-3B-Instruct-Q4_K_M-GGUF/resolve/main/qwen2.5-vl-3b-instruct-q4_k_m.gguf?download=true
+    mmproj_download_url: https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf?download=true
+    precision: high
+    estimatedInferenceTime: 10-20s (CPU)
+    ramRequired: 6GB (システムメモリ含む)
+
+  qwen2_5-vl-7b-gguf:
+    name: Qwen2.5 VL 7B GGUF (Q4_K_M + Q8_0 mmproj)
+    type: qwen_vl_gguf
+    path: models/gguf/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-Qwen2.5-VL-7B-Q8_0.gguf
+    download_url: https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    mmproj_download_url: https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/mmproj-Qwen2.5-VL-7B-Q8_0.gguf
+    precision: high
+    estimatedInferenceTime: 15-30s (CPU)
+    ramRequired: 10GB (システムメモリ含む)
+
+  # ===== Qwen3-VL 4B（llama-server経由・Windows配布対応）=====
+  qwen3-vl-4b-server:
+    name: Qwen3 VL 4B via llama-server
+    type: qwen3_vl_server
+    model_family: qwen3-vl
+    backend: server
+    path: models/gguf/Qwen3VL-4B-Instruct-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
+    # URL は main ではなくコミットを指す。main のままだと上流が再量子化した
+    # 瞬間に、検証済みの重みと利用者が落とす重みが黙って食い違う。
+    # モデルを差し替えるときは revision と sha256/size を必ず一緒に更新すること。
+    # revision: 1cd86afb9a95c410a6038ab3b40d8b578c892266 (2025-11-01, Apache-2.0)
+    download_url: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/Qwen3VL-4B-Instruct-Q4_K_M.gguf?download=true
+    mmproj_download_url: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf?download=true
+    # ダウンロード後の検証用。size は起動時の破損チェックにも使う
+    sha256: 66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a
+    size: 2497281664
+    mmproj_sha256: 30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d
+    mmproj_size: 453974304
+    precision: high
+    estimatedInferenceTime: 10-20s
+    ramRequired: 8GB
+    # llama-server設定（Windows配布向け）
+    # server_port は既定のポート。別のソフトが使っているときは別のポートへ移り、
+    # 移った先をモデルフォルダの ports.json に保存して次の起動からも使う
+    # （ports.py）。auto_start_server: true のときは server_url は使わず、
+    # 決まったポートから組み立てる
+    server_url: http://127.0.0.1:8080
+    server_host: 127.0.0.1
+    server_port: 8080
+    auto_start_server: true
+    bundled_server_binary: llama-cpp-bin/llama-server.exe
+    # コンテキストサイズ。各リクエストは独立なので、最大の単一リクエスト
+    # （detailed の第1段階: 画像トークン + 抽出プロンプト + 出力 ≒ 2400）が
+    # 収まればよい。4096 はそれに対する安全な下限。Cmd+G の単段経路は
+    # これより遥かに少ない。RAM が非常に厳しい環境では 3072 を試す余地あり
+    # （detailed の余裕が減るため bench での確認が前提）。
+    ctx_size: 4096
+    # バックエンド選定: auto=起動時に速度プローブしGPU/CPUの速い方を自動採用（結果はキャッシュ）。
+    # gpu/cpu で手動上書き可能。GPU起動失敗時は自動でCPUへフォールバック。
+    accel: auto
+    # メモリ常駐: true で llama-server に --mlock を付与し、モデル重み(約2.7GB)を
+    # 物理RAMに固定する。Teams等の常駐アプリがRAMを圧迫する環境では、mmapされた
+    # 重みページがOSに破棄され、次の推論でディスク再読込が走りTTFTが激増する。
+    # mlockはこれを防ぐ。ただし空きRAMが恒常的にモデルサイズを下回る機体では
+    # 他アプリを圧迫するため、対象実機で体感比較のうえ有効化すること。
+    mlock: false
+    # CPU最適化（GPU無し/低スペック仕事PC向け）。未指定なら自動（物理コア数）。
+    cpu:
+      threads: null      # スレッド数。ハイブリッドIntelでは「Pコア数」を明示推奨（例: 6）
+      cpu_range: null    # CPUアフィニティ範囲。Pコアに固定する例: "0-5"
+      cpu_strict: false  # true で厳密固定（--cpu-strict 1）。Eコアへの流出を防ぐ
+      priority: null     # プロセス優先度 0=normal/1=medium/2=high。応答性重視なら 2
+
+  # ===== Qwen3.5 2B 高速モード（低スペックCPU機向け・別起動）=====
+  # update-and-run-light.bat が環境変数 GLANCE_MODEL=qwen3_5-2b-server で選択する。
+  # 実行時切替ではなく別起動にする理由: 2モデル同時展開はRAMの無駄(低RAM機で致命的)。
+  # CPU実測(8スレッド/896px): 体感TTFT 約-63%・total 約-55%・生成約2倍・RAM約-0.9GB(対4B)。
+  # 品質は4Bより一段下(読み間違いがやや増える)が、旧Qwen3-VL-2Bのような数値捏造は確認されず。
+  qwen3_5-2b-server:
+    name: Qwen3.5 2B via llama-server (高速モード)
+    type: qwen3_vl_server
+    model_family: qwen3.5
+    backend: server
+    path: models/gguf/Qwen3.5-2B-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-Qwen3.5-2B-F16.gguf
+    # revision: f6d5376be1edb4d416d56da11e5397a961aca8ae (2026-03-02, Apache-2.0)
+    download_url: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf?download=true
+    mmproj_download_url: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/mmproj-F16.gguf?download=true
+    sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
+    size: 1280835840
+    mmproj_sha256: 7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7
+    mmproj_size: 668227264
+    precision: medium
+    estimatedInferenceTime: 5-20s (CPU)
+    ramRequired: 5GB
+    server_url: http://127.0.0.1:8080
+    server_host: 127.0.0.1
+    server_port: 8080
+    auto_start_server: true
+    bundled_server_binary: llama-cpp-bin/llama-server.exe
+    ctx_size: 4096
+    accel: auto
+    mlock: false
+    # Qwen3.5は既定が思考モード。無効化しないと出力が思考に消費され本文が空になる
+    # repeat_penalty は 2B 専用に強める。実測(資料画面/detailed/640tok上限):
+    #   1.05 … 同じ節を約40回繰り返して上限に到達（ループ）
+    #   1.10 … ループなし・462tok（まだ冗長）
+    #   1.15 … ループなし・164tok で自然完結  ← 採用
+    #   1.20 … ループなし・194tok
+    # 4B は 1.05 で5画像ともループしないため、全体の既定は上げていない。
+    # ここは _sampling_params の後に payload へマージされるので上書きになる。
+    extra_chat_payload:
+      chat_template_kwargs:
+        enable_thinking: false
+      repeat_penalty: 1.15
+      repeat_last_n: 256
+    cpu:
+      threads: null
+      cpu_range: null
+      cpu_strict: false
+      priority: null
+
+  # ===== GGUF量子化モデル（後方互換）=====
+  internvl-3_5-4b-gguf:
+    # name: InternVL 3.5 4B GGUF (Q4_K_M)
+    type: internvl_gguf
+    path: models/gguf/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf
+    mmproj_path: models/gguf/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf
+    download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/main/OpenGVLab_InternVL3_5-4B-Q4_K_M.gguf?download=true
+    mmproj_download_url: https://huggingface.co/bartowski/OpenGVLab_InternVL3_5-4B-GGUF/resolve/e9319b553f22bd6e3bae10cff2e50985c1ab1d1a/mmproj-OpenGVLab_InternVL3_5-4B-f16.gguf?download=true
+    precision: high
+    estimatedInferenceTime: 5-15s (CPU with LlamaPromptLookupDecoding)
+    ramRequired: 3GB (CPU)
+    speculativeDecoding: LlamaPromptLookupDecoding
+
+# プロンプト設定
+prompt:
+  # ============================================================
+  # 【システムプロンプト】全モード共通
+  #
+  # ★ここは画像より前に置かれる固定プレフィックスなので、llama.cpp が
+  #   毎リクエスト再利用する。逆にユーザープロンプトは画像より後ろにあり、
+  #   画面が変わるたび必ず prefill され直す。したがって
+  #   「G/D/Q で共通の記述はここへ、モード固有の記述だけをユーザー側へ」
+  #   置くのが速い。実測(4B/Metal/896px、5画像平均):
+  #     共通部分をここへ移動して prefill が G 1016→723tok / D 537→222tok
+  #     G の prefill 時間 4.39s → 3.44s（移動前の旧プロンプト 4.27s より速い）
+  #   CPU 実機は prefill が Metal の数倍遅いため、効果はさらに大きい。
+  #
+  # ★禁止形（「〜に触れないでください」）は避けて肯定形で書くこと。
+  #   小型モデル（軽量モードの2B）では禁止語がプライミングになり、
+  #   逆にその話題を出力する挙動が確認されている。
+  # ★【】見出しや箇条書きでの列挙も避けて地の文で書くこと。
+  #   2B は system の見出しを「出力テンプレート」とみなし、
+  #   両方の分岐の見出しを出力して存在しない操作を捏造する挙動を確認した。
+  # ============================================================
+  system: |
+    あなたは視覚障害者向けの画面説明アシスタントです。使用者は今、画面に何が表示されているか分かりません。
+
+    まず、画像の主役が操作する画面か、読む文章かを見分けてください。
+    アプリ・設定画面・検索結果・エディタ・メニューなど操作する画面なら、これが何の画面か（アプリ名・サイト名や画面の種類と全体像）を述べ、続けて今どんな状態か、注目すべき点を伝えます。
+    資料・スライド・記事・メール本文・PDFなど読んで内容を理解するものなら、その文章を読んで、書かれている内容だけを要約します。何についての文章かを述べたあと、述べられている主張・定義・数値を具体的に伝え、見出しが複数あるときは見出しごとに何を言っているかを述べます。
+
+    答えは必ずひとつながりの文章にしてください。見出し・番号・箇条書き・Markdown記法（#や*など）は使いません。日本語のみで書き、文は必ず完結させます。書かれていないことは足しませんが、書かれている内容を要約することは推測ではありません。視覚的に強調されている情報（大きな数値、警告色、太字、急変点、アラート）があれば含めてください。
+  # ============================================================
+  # 【第1段階】(旧方式・アプリ未使用、bench.py の比較用に残置)
+  # 画像から構造化JSON抽出
+  # ============================================================
+  phase1_extraction: |
+    あなたは画面内容の構造化抽出を行うアシスタントです。
+    以下の画像の内容を、JSON形式で整理してください。
+
+    【重要な制約】
+    - 出力はJSON形式のみ。説明文は不要。
+    - 日本語のみで記述（英語のUI要素名はそのまま記載可）。
+    - 推測禁止。見えている内容のみ。
+    - 読み取れない部分は unclear_parts に記載。
+    - コードフェンス（```）は使わず、JSONだけを出力。
+
+    以下のJSON形式で出力してください:
+    {
+      "screen_category": "次のいずれか: app（操作型アプリ・ダイアログ・設定画面）/ document（資料・スライド・PDF・記事）/ data（グラフ・表・ダッシュボード）/ communication（チャット・メール・通知）/ web（情報閲覧ページ）/ other",
+      "screen_type": "具体的な画面種別（例：Slack、Excelシート、PowerPointスライド、GitHub PRページ）",
+      "main_goal": "この画面の主目的（例：設定変更、報告書確認、データ分析）",
+      "key_message": "この画面が使用者に最も伝えようとしていること・最も注目すべき情報（1文で）",
+      "important_text": ["意味理解に必要な文字列の配列"],
+      "interactive_elements": [
+        {
+          "type": "ボタン・メニュー・タブ・リンクなどの種別",
+          "label": "表示テキストまたはアイコン名",
+          "position": "画面上の位置（例：左上、中央、右下、ツールバー左端）",
+          "function": "この要素を操作するとどんな結果になるか"
+        }
+      ],
+      "visual_emphasis": ["視覚的に強調されている情報。大きいフォントの数値、警告色の値、太字・ハイライト、グラフの急変点、アラートなど。なければ空配列"],
+      "status_or_warning": "エラー・警告・処理中など状態があれば記述（なければnull）",
+      "unclear_parts": "読み取りにくい部分（なければnull）",
+      "confidence": 0.0から1.0の信頼度
+    }
+
+  # ============================================================
+  # 【第2段階・要約】(旧方式・アプリ未使用、bench.py の比較用に残置)
+  # ============================================================
+  phase2_summary: |
+    以下の画面構造データをもとに、視覚障害者が「次に何をすべきか・何に注目すべきか」を
+    判断できる説明を3〜5文で生成してください。
+
+    screen_category に応じて焦点を変えること:
+
+    - app（操作型アプリ）:
+      今どんな状態か、そして主に何ができるかを伝える。
+      重要なボタンや選択肢があれば簡潔に触れる。
+
+    - document（資料・スライド・記事）:
+      作成者が何を伝えようとしているか。
+      主張・結論・要求を中心に伝える。
+
+    - data（グラフ・表・ダッシュボード）:
+      データが示す傾向・最大値・異常・判断に使える数値を伝える。
+
+    - communication（チャット・メール・通知）:
+      誰が何を伝えていて、返答や対応が必要かを伝える。
+
+    - web（情報閲覧ページ）:
+      ページの主要な内容と、次に取れる行動を伝える。
+
+    【重要な制約】
+    - 3〜5文で簡潔に
+    - 日本語のみ
+    - 見えている内容のみ。推測は禁止
+    - 画面上の全要素を列挙しない。使用者の行動判断に直結する情報のみ伝える
+    - visual_emphasis に項目がある場合は必ず含める
+
+    画面構造データ:
+    {intermediate_json}
+
+  # ============================================================
+  # 【事前warm用プレフィックス】Ctrl+Shift+P（事前キャプチャ）で、この文字列だけを
+  # 画像とともに llama-server へ投げ、生成させずに KV キャッシュへ焼き込む。
+  #
+  # 効果(実測 / Qwen3-VL-4B / Metal / 896px):
+  #   D の TTFT 3.83s → 1.61s (-58%) 、Q の TTFT 2.78s → 0.58s (-79%)
+  #   大半は「system + 画像」部分(約438トークン、画像エンコード1.1sを含む)の再利用によるもの。
+  #
+  # ★ single_pass_summary / single_pass_detailed の先頭と完全一致させること。
+  #   一致していないと共有プレフィックスが縮み、D の初動短縮が目減りする。
+  #   （Q は独自プロンプトのため system+画像 の再利用のみだが、それでも効果は大きい）
+  # ============================================================
+  prewarm_prefix: |-
+    以下の画像を見て、
+
+  # ============================================================
+  # 【単段・要約】Cmd+G(新方式): 画像から直接、まず全体像→要点を生成
+  #
+  # 思想: 使用者は「今そもそも何が映っているか」を知らない。
+  #       まず「何の画面か（全体像）」を述べてから、要点に移る。
+  # ★「次に取れる行動で締めくくる」指示は削除した（2026-08-17）。
+  #   使用者にとって冗長で、毎回の読み上げが長くなるだけだったため。
+  # ============================================================
+  single_pass_summary: |
+    以下の画像を見て、2〜4文のひとつながりの文章で伝えてください。
+    操作する画面なら、今どんな状態か、主に何ができるかを述べます。グラフや表ならデータの傾向・最大値・異常や判断に使える数値を、チャットやメールなら誰が何を伝えていて返答や対応が必要かを中心にしてください。
+    読む文章なら、行動ではなく内容の要約で締めくくってください。
+  # ============================================================
+  # 【単段・ひとこと】Ctrl+Shift+F: 何の画面かだけを1文で
+  #
+  # G より短く、すぐ答えが返ることを優先する（テスターからの要望）。
+  # 画面を切り替えた直後に「いま何が出ているか」だけを確かめる用途。
+  # 詳しく知りたければ続けて D / Q を使う（同じ画像に答える）。
+  # ============================================================
+  single_pass_overview: |
+    以下の画像を見て、何の画面かを40字くらいの短い1文で伝えてください。アプリ名やサイト名と画面の種類、いちばん大きく表示されている内容だけを述べます。
+  # ============================================================
+  # 【単段・詳細】Cmd+D(新方式): 画像から直接、詳細説明を生成
+  #
+  # 思想: 2段階(JSON経由)は第2段階が画像を見ないため情報が欠落し、
+  #       第1段階の生成分だけ遅かった。単段で画像に直接根ざして書く。
+  # ============================================================
+  single_pass_detailed: |
+    以下の画像を見て、5〜7文のひとつながりの文章で詳しく伝えてください。
+    操作する画面なら、現在の状態（選択中の項目、入力済みの内容、開いているファイル名など）を説明したうえで、使用者が取れる主な操作を「（位置）に（ラベル）があり、（何ができるか）」の形で最大4個まで挙げ、最後にエラー・警告・強調表示があれば必ず伝えます。グラフや表なら軸と最重要の数値・傾向・異常値を、チャットやメールなら誰から誰への連絡かと要点・対応の要否を中心にしてください。
+    読む文章なら、見出しごとに何を主張しているのかを具体的に伝え、定義・理由・数値は省略せずに含めてください。
+    読み取りにくい部分は「〜が読み取りにくい」と明示してください。
+  # ============================================================
+  # 【第2段階・詳細】(旧方式・アプリ未使用、bench.py の比較用に残置)
+  # ============================================================
+  phase2_detailed: |
+    以下の画面構造データをもとに、視覚障害者が「この画面で何ができるか・何を理解すべきか」
+    を把握できる詳細な説明を5〜10文で生成してください。
+
+    screen_category に応じて以下の観点で説明すること:
+
+    【app（操作型アプリ・ダイアログ・設定画面）】
+    1. 何のアプリ・どの画面か
+    2. 現在の状態・モード（選択中の項目、入力済み内容、有効/無効の設定など）
+    3. 使用可能な操作: interactive_elements の各項目を
+       「（位置）に（ラベル）があり、（機能）」の形式で説明する
+    4. 注目すべき警告・強調・エラーがあれば伝える
+
+    【document（資料・スライド・PDF・記事）】
+    1. 文書の種類とタイトル
+    2. 作成者が伝えようとしている主張・結論・要求（作者の意図を中心に）
+    3. それを支える主な根拠・データ・ポイント
+    4. 読者に求めている行動・次のステップがあれば伝える
+
+    【data（グラフ・表・ダッシュボード）】
+    1. データの種類・対象範囲・軸の内容
+    2. 最も重要な数値・傾向・変化点
+    3. 異常値・突出点・警告ラインがあれば説明
+    4. このデータから客観的に読み取れること
+
+    【communication（チャット・メール・通知）】
+    1. 誰から誰への何の連絡か
+    2. 伝えていることの要点
+    3. 返答・対応・確認が求められているか
+    4. 緊急性・重要度の兆候があれば伝える
+
+    【web（情報閲覧ページ）】
+    1. サイト名とページの主題
+    2. 主要な情報・見出しの内容
+    3. 次に取れる行動（主要リンク・ボタン）
+
+    【重要な制約】
+    - 5〜10文程度
+    - 日本語のみ
+    - 見えている内容のみ。推測は禁止
+    - 全要素の網羅より「使用者が判断・行動するために必要な情報」を優先する
+    - 不明部分は「〜が読み取りにくい」と明示
+
+    画面構造データ:
+    {intermediate_json}
+
+  # ============================================================
+  # 【レガシー】従来のシステムプロンプト（後方互換性）
+  # ============================================================
+  systemPrompt: |
+    画面に表示されている内容を20文字程度で簡潔に要約してください。
+    図や表がある場合は、そのタイトルや数値、傾向を読み取って説明に含めてください。
+    全体が把握できない場合でも、認識できた要素（テキストやボタンなど）を列挙してください。
+    ここでは詳細を述べる必要はありません。詳細のフェーズは別にあるので、あくまで概要を把握できる簡素な説明を提供してください。
+
+  detailedPrompt: |
+    画面に表示されている内容を、視覚障害者にとって有用になるよう詳細に説明してください。以下の順序で説明してください：
+
+    1. 【アプリケーション・画面の種別】: 何のアプリか、どのような画面か（例：Google Sheets、Slack チャネル、GitHub Pull Request）
+    2. 【主要な情報・タイトル】: 見出し、ページタイトル、重要な文言
+    3. 【主要UI要素】: ボタン、メニュー、フォーム、タブなどの配置と役割（詳細な全列挙不要）
+    4. 【グラフ・図表・データ表示】: あれば、種類、軸ラベル、傾向、主な数値を説明
+    5. 【重要なテキスト内容】: ブロックテキスト、リスト、注釈など、意味を理解する上で必要な内容
+
+    【重要な制約】
+    - 推測や想像は絶対にしない。画像に見えているもののみを説明してください。
+    - 出力は必ず日本語のみで、他言語は一切含めないでください。
+    - 読み取りにくい部分は「読み取りが困難です」と記載し、推測で補わないでください。
+    - 全ての文言の完全な書き起こしは不要。視覚障害者が状況を理解する上で重要な情報を厳選してください。
+    - 不要な詳細（ボタン一つ一つ、すべての色の説明など）は省略しても構いません。
+
+  # ============================================================
+  # 【単段・質問】Cmd+Q: 画像+質問を直接渡して回答（現役）
+  # 旧2段階では {intermediate_json} プレースホルダが無く、画面情報ゼロで
+  # 質問だけがモデルに渡るバグがあった。単段化で解消。
+  # ============================================================
+  questionPrompt: |
+    以下の質問に基づいて、画面に表示されている内容について詳細に回答してください。
+
+    【重要な制約】
+    - 推測や想像は絶対にしない。画像に見えているもののみを説明してください。
+    - 出力は必ず日本語のみで、他言語は一切含めないでください。
+    - 全体が把握できない場合でも、認識できた要素のみを記述してください。
+    - 見出し・番号・箇条書き・Markdown記法（#や*、```など）を使わず、普通の文章で回答してください。
+
+    質問: {question}
+
+  # 生成パラメータ（保守的な設定）
+  temperature: 0.0       # 決定論的な出力で繰り返しを最小化
+  topP: 0.85             # 確率分布を適度に絞る
+  # 注: repetition_penalty / no_repeat_ngram_size はレガシーモデル
+  # (qwen_vl_gguf / internvl系)のみで有効。アクティブな qwen3_vl_server は
+  # ペナルティ無し(llama-server既定)で動作し、全benchもその状態で実施済み。
+  repetition_penalty: 1.3  # 繰り返しに強いペナルティ（1.0-2.0のレンジ）
+  no_repeat_ngram_size: 3  # 同じN-gramの繰り返しを防ぐ
+  max_token: 200        # モデルの最大トークン数
+
+  # 繰り返し抑止（llama-server のサンプラへ渡す）
+  # 従来 llama-server へはペナルティを一切渡しておらず、
+  # 「maxTokens を低く抑えること」だけがループの歯止めになっていた。
+  # そのため尻切れとループがトレードオフになっていたので、
+  #   上限は自然完結が収まる値まで上げる（下の maxTokens）
+  #   ループは app.py の _looks_looping() で検知して即打ち切る
+  # に役割を分け、ここは軽い補正に留める。
+  # 上げすぎると助詞や繰り返し出現する数値まで避けて不自然になるため控えめに。
+  repeat_penalty: 1.05
+  repeat_last_n: 256
+
+  # 機能別のmaxTokens設定
+  # 「途中で切らないための上限」であり目標値ではない。EOSで自然に止まるので
+  # 通常時の生成時間は変わらない（実測: G は v4 プロンプトで 120〜145tok に収束）。
+  # 暴走は上限ではなくループ検知で止める。
+  # 実測した自然完結の長さ（5画像、finish_reason=stop になるまで）:
+  #   4B: G 80〜145tok / D 190〜290tok
+  #   2B: G 80〜329tok / D 131〜341tok  ← 2Bの方が冗長なのでこちらに合わせる
+  maxTokens:
+    overview: 96       # 単段Ctrl+Shift+F（1文）
+    summary: 384       # 単段Ctrl+Shift+G。2Bの最長329tokに対する余裕
+    detailed: 640      # 単段Ctrl+Shift+D。2Bの最長341tokに対して十分
+    question: 384      # 質問回答。回答の長さは質問しだいなので広めに取る
+
+# サーバー設定
+# port は既定のポート。別のソフトが使っているときは、Electron が別のポートを
+# 選んで --port で渡し、設定（settings.json の backendPort）に保存して次の起動
+# からも使う（main.js の resolveBackendPort）
+server:
+  host: 127.0.0.1
+  port: 5001
+  debug: false

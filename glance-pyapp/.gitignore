@@ -1,0 +1,63 @@
+# Python
+python-backend/venv/
+python-backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Node.js
+electron/node_modules/
+electron/dist/
+**/node_modules/
+
+# Models（大容量ファイル）
+models/*
+!models/*.py
+transformers/*
+!transformers/*.py
+
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.gguf
+
+# Python Runtime（配布用）
+python-runtime/
+
+# ログ
+*.log
+logs/
+
+# ベンチ結果・バックエンド判定キャッシュ（生成物）
+python-backend/bench_results/
+python-backend/**/backend_cache.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ビルド成果物
+electron/dist/
+build/*
+!build/installer.nsh
+packaging/dist/
+
+# テスト
+test_images/
+*.png
+*.jpg
+*.jpeg
+
+# アプリアイコンだけは *.png の例外にする。electron-builder は icon が
+# 無くても警告だけで既定の Electron アイコンのまま完走するため、
+# コミットし忘れても手元のビルドでは気づけない。
+# （git は最後に一致した規則が勝つので、*.png より後ろに置くこと）
+!electron/build/icon.png
+!electron/build/icon.ico

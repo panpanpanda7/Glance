@@ -1,0 +1,635 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*' # "v1.0.0" などのタグを打つと実行されます
+  workflow_dispatch: # 手動実行も可能に
+
+permissions:
+  contents: write
+
+env:
+  # 同梱する llama.cpp のリリースタグ。
+  #
+  # ggml-org/llama.cpp のバイナリ入りリリース（b#####）は全て prerelease 扱いで、
+  # GitHub の releases/latest はそれらを飛ばす。2026-09-04 に nightly-tag.txt しか
+  # 持たない v0.4.0 が非 prerelease で作られてからは、latest がそれを返すように
+  # なり、ビルドが「Windows x64 バイナリが見つかりません」で落ちるようになった。
+  #
+  # 併せてタグを固定する。ここが浮動だと、同じ v0.3.0 を再ビルドしただけで
+  # 利用者の手元に載る推論エンジンが変わりうる。画面を見て切り分けられない
+  # 利用者に配る以上、配布物は再現可能にしておく。
+  #
+  # 上げるときは、実機で一度起動を確認してから上げること。
+  # 新しいものを試したいだけなら latest を入れると、資産を持つ最新の
+  # リリースを自動で探す。
+  LLAMA_CPP_TAG: b10901
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 1. Python環境のセットアップ
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install Python dependencies
+      working-directory: ./glance-pyapp/python-backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    # 1.5 llama-server.exe をダウンロード
+    - name: Download llama-server binary
+      env:
+        # Actions は secrets を自動で env に入れないので明示的に渡す。
+        # 空のまま Authorization ヘッダを送ると 401 になる。
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Windows 用 llama.cpp バイナリをダウンロード（LLAMA_CPP_TAG で固定）
+        Write-Host "========== llama-server.exe ダウンロード開始 =========="
+        
+        # GitHub API でリリース情報を取得する。
+        # releases/latest は使わない（上の LLAMA_CPP_TAG のコメントを参照）。
+        $apiBase = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+        $headers = @{
+          "Accept" = "application/vnd.github.v3+json"
+          # 素の api.github.com はランナーの共有 IP ごとに時間 60 回しか許されず、
+          # 混み合った時間帯に不定期に落ちる。トークンを付けて回避する。
+          "Authorization" = "Bearer $env:GITHUB_TOKEN"
+        }
+        $assetPattern = "bin-win-vulkan-x64.*\.zip$"
+        $latestRelease = $null
+
+        if ($env:LLAMA_CPP_TAG -eq "latest") {
+          Write-Host "📥 資産を持つ最新のリリースを検索中（prerelease を含む）..."
+          try {
+            $releases = Invoke-RestMethod -Uri "$($apiBase)?per_page=30" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: GitHub API 呼び出し失敗"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+          foreach ($r in $releases) {
+            if ($r.assets | Where-Object { $_.name -match $assetPattern }) {
+              $latestRelease = $r
+              break
+            }
+          }
+          if (-not $latestRelease) {
+            Write-Host "❌ ERROR: 直近 30 件のリリースに Windows x64 の資産がありません"
+            exit 1
+          }
+        } else {
+          Write-Host "📥 固定タグのリリース情報を取得中: $($env:LLAMA_CPP_TAG)"
+          try {
+            $latestRelease = Invoke-RestMethod -Uri "$apiBase/tags/$($env:LLAMA_CPP_TAG)" -Headers $headers
+          } catch {
+            Write-Host "❌ ERROR: タグ $($env:LLAMA_CPP_TAG) のリリースを取得できません"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+        }
+        Write-Host "✅ リリース情報取得完了: $($latestRelease.tag_name)"
+        
+        # Assets 一覧をログ出力して確認
+        Write-Host "📋 利用可能な assets:"
+        foreach ($asset in $latestRelease.assets) {
+          Write-Host "  - $($asset.name)"
+        }
+        
+        # Windows x64 バイナリを探す（複数のパターンに対応）
+        Write-Host "🔍 Windows x64 バイナリを検索中..."
+        $windowsAsset = $null
+        
+        # 優先: Vulkan ビルド。CPU は -ngl 0 で動作し、対応 iGPU/GPU では -ngl 99 で
+        # GPU 動作する単一バイナリ。バックエンドの GPU/CPU 切替は起動時プローブ(backend_selector)が決定。
+        foreach ($asset in $latestRelease.assets) {
+          if ($asset.name -match "bin-win-vulkan-x64.*\.zip$") {
+            $windowsAsset = $asset
+            Write-Host "✅ Vulkan ビルド検出: $($asset.name)"
+            break
+          }
+        }
+        # フォールバック: Vulkan 資産が無い場合は CPU ビルド
+        if (-not $windowsAsset) {
+          foreach ($asset in $latestRelease.assets) {
+            $name = $asset.name
+            if ($name -match "bin-win.*x64.*\.zip$" -and $name -notmatch "cuda|opencl|hipblas|vulkan|arm64") {
+              $windowsAsset = $asset
+              Write-Host "⚠️ Vulkan 未検出。CPU ビルドにフォールバック: $name"
+              break
+            }
+          }
+        }
+        
+        if (-not $windowsAsset) {
+          Write-Host "❌ ERROR: Windows x64 バイナリが見つかりません"
+          Write-Host "利用可能な assets:"
+          foreach ($asset in $latestRelease.assets) {
+            Write-Host "  - $($asset.name)"
+          }
+          exit 1
+        }
+        
+        # ダウンロード
+        $downloadUrl = $windowsAsset.browser_download_url
+        $assetName = $windowsAsset.name
+        Write-Host "📥 ダウンロード開始..."
+        Write-Host "  URL: $downloadUrl"
+        Write-Host "  Asset: $assetName"
+        
+        try {
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-cpp-bin.zip"
+          Write-Host "✅ ダウンロード完了"
+        } catch {
+          Write-Host "❌ ERROR: ダウンロード失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
+        
+        # ZIP を展開
+        Write-Host "📂 ZIP を展開中..."
+        try {
+          Expand-Archive -Path "llama-cpp-bin.zip" -DestinationPath "llama-cpp-bin" -Force
+          Write-Host "✅ 展開完了"
+        } catch {
+          Write-Host "❌ ERROR: ZIP 展開失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
+        
+        # llama-server.exe を探す
+        Write-Host "🔍 llama-server.exe を検索中..."
+        $exePath = Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+        
+        if ($exePath) {
+          Write-Host "✅ llama-server.exe 検出"
+          Write-Host "  検出パス: $($exePath.FullName)"
+          
+          # exe の親ディレクトリを特定
+          $sourceDir = $exePath.Directory.FullName
+          Write-Host "📋 ソースディレクトリ: $sourceDir"
+          
+          # ソースディレクトリ内の DLL とその他必要ファイルを確認
+          Write-Host "📋 ソースディレクトリ内のファイル一覧:"
+          $dllFiles = Get-ChildItem -Path $sourceDir -Filter "*.dll" | Select-Object Name
+          $exeFiles = Get-ChildItem -Path $sourceDir -Filter "*.exe" | Select-Object Name
+          $otherFiles = Get-ChildItem -Path $sourceDir -Filter "*.txt" | Select-Object Name
+          
+          Write-Host "  DLL ファイル:"
+          if ($dllFiles.Count -gt 0) {
+            foreach ($dll in $dllFiles) {
+              Write-Host "    - $($dll.Name)"
+            }
+          } else {
+            Write-Host "    (DLL なし)"
+          }
+          
+          Write-Host "  EXE ファイル:"
+          foreach ($exe in $exeFiles) {
+            Write-Host "    - $($exe.Name)"
+          }
+          
+          # ソースディレクトリを丸ごと python-backend にコピー
+          $destDir = "./glance-pyapp/python-backend/llama-cpp-bin"
+          Write-Host "📋 コピー先: $destDir"
+          Write-Host "📋 ソースディレクトリの内容を丸ごとコピー中..."
+          
+          try {
+            # 既存ディレクトリがあれば削除
+            if (Test-Path $destDir) {
+              Remove-Item -Path $destDir -Recurse -Force
+            }
+            
+            # ソースディレクトリ自体をコピー（subdirectory 構造も保持）
+            Copy-Item -Path $sourceDir -Destination $destDir -Recurse -Force
+            Write-Host "✅ ソースディレクトリのコピー完了"
+            
+            # コピー後の確認
+            Write-Host "📋 コピー後のファイル確認:"
+            $copiedFiles = Get-ChildItem -Path $destDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+            Write-Host "  合計ファイル数: $($copiedFiles.Count)"
+            
+            $copiedDlls = Get-ChildItem -Path $destDir -Filter "*.dll" -Recurse
+            Write-Host "  DLL ファイル数: $($copiedDlls.Count)"
+            if ($copiedDlls.Count -eq 0) {
+              Write-Host "  ⚠️ WARNING: DLL が見つかりません。実行時にエラーが発生する可能性があります"
+            }
+            
+            $copiedExes = Get-ChildItem -Path $destDir -Filter "llama-server.exe" -Recurse
+            if ($copiedExes.Count -eq 0) {
+              Write-Host "  ❌ ERROR: llama-server.exe のコピーに失敗しました"
+              exit 1
+            }
+            Write-Host "  ✅ llama-server.exe のコピー確認"
+            
+          } catch {
+            Write-Host "❌ ERROR: ソースディレクトリのコピー失敗"
+            Write-Host $_.Exception.Message
+            exit 1
+          }
+        } else {
+          Write-Host "❌ ERROR: llama-server.exe が展開後のアーカイブに見つかりません"
+          Write-Host "展開後のディレクトリ構造:"
+          Get-ChildItem -Path "llama-cpp-bin" -Recurse -Filter "*.exe" | Select-Object -First 20 FullName
+          exit 1
+        }
+        
+        Write-Host "========== llama-server.exe ダウンロード完了 =========="
+
+    # 2. Pythonバックエンドのビルド（モデルを含まないので高速）
+    - name: Build Python Backend
+      working-directory: ./glance-pyapp/python-backend
+      run: |
+        pyinstaller glance.spec
+
+    # 2.5 llama-cpp-bin (exe + DLL) を dist/glance-backend/ にコピー
+    - name: Copy llama-cpp-bin to PyInstaller dist
+      run: |
+        Write-Host "========== llama-cpp-bin (exe + DLL) を dist へコピー =========="
+        
+        # コピー元ディレクトリを確認
+        Write-Host "📋 ステップ1: コピー元の確認"
+        $sourceDir = "./glance-pyapp/python-backend/llama-cpp-bin"
+        Write-Host "  ソースディレクトリ: $sourceDir"
+        
+        if (-not (Test-Path $sourceDir)) {
+          Write-Host "❌ ERROR: llama-cpp-bin ディレクトリが見つかりません"
+          Write-Host "  python-backend フォルダ内の内容:"
+          Get-ChildItem "./glance-pyapp/python-backend/" -Directory
+          exit 1
+        }
+        
+        Write-Host "✅ ソースディレクトリ確認: $sourceDir"
+        
+        # ソースディレクトリ内のファイル一覧を確認
+        Write-Host "📋 ソースディレクトリ内のファイル一覧:"
+        $sourceFiles = Get-ChildItem -Path $sourceDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+        $sourceDlls = Get-ChildItem -Path $sourceDir -Filter "*.dll" -Recurse
+        $sourceExes = Get-ChildItem -Path $sourceDir -Filter "llama-server.exe" -Recurse
+        
+        Write-Host "  合計ファイル数: $($sourceFiles.Count)"
+        Write-Host "  DLL ファイル数: $($sourceDlls.Count)"
+        
+        if ($sourceDlls.Count -eq 0) {
+          Write-Host "  ⚠️ WARNING: DLL が見つかりません"
+        }
+        
+        Write-Host "  DLL 一覧:"
+        foreach ($dll in $sourceDlls) {
+          Write-Host "    - $($dll.Name)"
+        }
+        
+        if ($sourceExes.Count -eq 0) {
+          Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+          exit 1
+        }
+        
+        # コピー先ディレクトリを確認
+        Write-Host "📋 ステップ2: コピー先ディレクトリの確認"
+        $destDir = "./glance-pyapp/python-backend/dist/glance-backend"
+        Write-Host "  対象ディレクトリ: $destDir"
+        
+        if (-not (Test-Path $destDir)) {
+          Write-Host "❌ ERROR: PyInstaller dist ディレクトリが見つかりません"
+          exit 1
+        }
+        
+        Write-Host "✅ dist ディレクトリ確認完了"
+        
+        # llama-cpp-bin をコピー
+        Write-Host "📋 ステップ3: llama-cpp-bin を dist へコピー"
+        $destLlamaBinDir = "$destDir\llama-cpp-bin"
+        Write-Host "  コピー元: $sourceDir"
+        Write-Host "  コピー先: $destLlamaBinDir"
+        
+        try {
+          # 既存ディレクトリがあれば削除
+          if (Test-Path $destLlamaBinDir) {
+            Remove-Item -Path $destLlamaBinDir -Recurse -Force
+            Write-Host "  既存ディレクトリを削除しました"
+          }
+          
+          # コピー
+          Copy-Item -Path $sourceDir -Destination $destLlamaBinDir -Recurse -Force
+          Write-Host "✅ コピー完了"
+        } catch {
+          Write-Host "❌ ERROR: llama-cpp-bin のコピーに失敗"
+          Write-Host $_.Exception.Message
+          exit 1
+        }
+        
+        # コピー後の確認
+        Write-Host "📋 ステップ4: コピー後の確認"
+        $destFiles = Get-ChildItem -Path $destLlamaBinDir -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+        $destDlls = Get-ChildItem -Path $destLlamaBinDir -Filter "*.dll" -Recurse
+        $destExes = Get-ChildItem -Path $destLlamaBinDir -Filter "llama-server.exe" -Recurse
+        
+        Write-Host "  合計ファイル数: $($destFiles.Count)"
+        Write-Host "  DLL ファイル数: $($destDlls.Count)"
+        
+        if ($destDlls.Count -eq 0) {
+          Write-Host "  ⚠️ WARNING: DLL がコピーされていません。実行時エラーが発生する可能性があります"
+        } else {
+          Write-Host "  ✅ DLL がコピーされています"
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $destDlls) {
+            Write-Host "    - $($dll.Name)"
+          }
+        }
+        
+        if ($destExes.Count -eq 0) {
+          Write-Host "  ❌ ERROR: llama-server.exe がコピーされていません"
+          exit 1
+        }
+        Write-Host "  ✅ llama-server.exe がコピーされています"
+        
+        Write-Host "========== llama-cpp-bin を dist へコピー完了 =========="
+
+    # 3. Node.js環境のセットアップ
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: './glance-pyapp/electron/package-lock.json'
+
+    - name: Install Electron dependencies
+      working-directory: ./glance-pyapp/electron
+      run: npm ci
+
+    # 3.5 第三者ソフトウェアのライセンス表記を、実際に同梱する版から作り直す
+    #     （colorama など Windows でだけ入る依存も、ここで拾われる）
+    - name: Generate third-party notices
+      run: python glance-pyapp/scripts/generate_third_party_notices.py
+
+    # 4. ビルド済みPythonバックエンドをElectronのリソースにコピー
+    - name: Copy Python backend to Electron resources
+      run: |
+        Write-Host "========== Electron resources への配置 =========="
+        
+        New-Item -ItemType Directory -Force -Path ./glance-pyapp/electron/resources
+        Write-Host "✅ resources ディレクトリ作成完了"
+        
+        Write-Host "📋 dist/glance-backend/ を resources へコピー中..."
+        Copy-Item -Recurse -Force ./glance-pyapp/python-backend/dist/glance-backend ./glance-pyapp/electron/resources/
+        Write-Host "✅ コピー完了"
+
+    # 4.5 llama-server.exe + DLL の最終配置確認
+    - name: Verify llama-server.exe and DLLs in final location
+      run: |
+        Write-Host "========== llama-server.exe と DLL の最終配置確認 =========="
+        
+        # 確認1: glance-pyapp/python-backend/llama-cpp-bin/
+        Write-Host "📋 確認1: python-backend/llama-cpp-bin/"
+        $check1Path = "./glance-pyapp/python-backend/llama-cpp-bin"
+        Write-Host "  パス: $check1Path"
+        if (Test-Path $check1Path) {
+          $files = Get-ChildItem -Path $check1Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check1Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check1Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ⚠️ WARNING: DLL が見つかりません"
+          } else {
+            Write-Host "  ✅ DLL が含まれています"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
+        } else {
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
+          exit 1
+        }
+        
+        # 確認2: dist/glance-backend/llama-cpp-bin/
+        Write-Host "📋 確認2: dist/glance-backend/llama-cpp-bin/"
+        $check2Path = "./glance-pyapp/python-backend/dist/glance-backend/llama-cpp-bin"
+        Write-Host "  パス: $check2Path"
+        if (Test-Path $check2Path) {
+          $files = Get-ChildItem -Path $check2Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check2Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check2Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ❌ ERROR: DLL が見つかりません（実行時エラーの原因になります）"
+            exit 1
+          }
+          
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $dlls) {
+            Write-Host "    - $($dll.Name)"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
+        } else {
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
+          exit 1
+        }
+        
+        # 確認3: electron/resources/glance-backend/llama-cpp-bin/
+        Write-Host "📋 確認3: electron/resources/glance-backend/llama-cpp-bin/"
+        $check3Path = "./glance-pyapp/electron/resources/glance-backend/llama-cpp-bin"
+        Write-Host "  パス: $check3Path"
+        if (Test-Path $check3Path) {
+          $files = Get-ChildItem -Path $check3Path -Recurse | Where-Object {$_.PSIsContainer -eq $false}
+          $dlls = Get-ChildItem -Path $check3Path -Filter "*.dll" -Recurse
+          $exes = Get-ChildItem -Path $check3Path -Filter "llama-server.exe" -Recurse
+          
+          Write-Host "  ✅ ディレクトリ存在確認: OK"
+          Write-Host "  ファイル数: $($files.Count)"
+          Write-Host "  DLL 数: $($dlls.Count)"
+          
+          if ($dlls.Count -eq 0) {
+            Write-Host "  ❌ ERROR: DLL が見つかりません（リリースには同梱されません）"
+            exit 1
+          }
+          
+          Write-Host "  DLL 一覧:"
+          foreach ($dll in $dlls) {
+            Write-Host "    - $($dll.Name)"
+          }
+          
+          if ($exes.Count -gt 0) {
+            Write-Host "  ✅ llama-server.exe が含まれています"
+          } else {
+            Write-Host "  ❌ ERROR: llama-server.exe が見つかりません"
+            exit 1
+          }
+        } else {
+          Write-Host "  ❌ ERROR: ディレクトリが見つかりません"
+          exit 1
+        }
+        
+        # 確認4: glance-backend.exe との共存確認
+        Write-Host "📋 確認4: glance-backend.exe との共存確認"
+        $glanceExePath = "./glance-pyapp/electron/resources/glance-backend/glance-backend.exe"
+        Write-Host "  パス: $glanceExePath"
+        if (Test-Path $glanceExePath) {
+          $info = Get-Item $glanceExePath
+          Write-Host "  ✅ glance-backend.exe 存在確認: OK"
+          Write-Host "  サイズ: $($info.Length) bytes"
+          Write-Host "  ✅ glance-backend.exe と llama-cpp-bin が同じディレクトリに存在"
+        } else {
+          Write-Host "  ❌ ERROR: glance-backend.exe が見つかりません"
+          exit 1
+        }
+        
+        Write-Host "========== 最終配置確認が完了（DLL も含まれています）=========="
+
+    # 5. アプリのビルドとパッケージング
+    - name: Build Electron App
+      working-directory: ./glance-pyapp/electron
+      run: npm run build
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # 5.5 ビルド結果の確認
+    #     タグを打つ前に workflow_dispatch で走らせて、インストーラのサイズと
+    #     latest.yml の有無を確かめられるようにする。latest.yml が欠けると
+    #     自動更新は無言で止まるので、公開前に必ずここで見る。
+    - name: Show build output
+      working-directory: ./glance-pyapp/electron
+      run: |
+        Write-Host "========== dist の中身 =========="
+        Get-ChildItem dist -File | ForEach-Object {
+          "{0,-45} {1,10:N1} MB" -f $_.Name, ($_.Length / 1MB)
+        }
+        if (Test-Path dist/latest.yml) {
+          Write-Host ""
+          Write-Host "---------- latest.yml ----------"
+          Get-Content dist/latest.yml
+        } else {
+          Write-Host ""
+          Write-Host "[WARNING] latest.yml がありません。自動更新が動きません"
+        }
+
+    # 5.6 タグ無しの実行では、インストーラを Actions の成果物として残す。
+    #     公開リリースを作らずに実機へ入れて試せるようにするため。
+    - name: Upload installer artifact
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: glance-installer
+        path: |
+          glance-pyapp/electron/dist/*.exe
+          glance-pyapp/electron/dist/latest.yml
+        retention-days: 14
+
+    # 5.7 バージョンを含まない複製を作る
+    #     README のリンクを毎リリース書き換えずに済ませるため。
+    #     /releases/latest/download/<資産名> は資産名の完全一致を要求するので、
+    #     名前にバージョンが入っていると恒久リンクにできない。
+    #     自動更新は latest.yml が指すバージョン付きの方を使うため、この複製を
+    #     増やしても更新処理には影響しない。
+    - name: Create version-less installer copy
+      working-directory: ./glance-pyapp/electron
+      run: |
+        $installer = Get-ChildItem dist -Filter 'Glance-Setup-*.exe' | Select-Object -First 1
+        if (-not $installer) {
+          Write-Host "[ERROR] Glance-Setup-*.exe が見つかりません"
+          exit 1
+        }
+        Copy-Item $installer.FullName -Destination dist/Glance-Setup.exe -Force
+        Write-Host "恒久リンク用の複製を作成しました: Glance-Setup.exe ($($installer.Name) より)"
+
+        # exe のダウンロードがブラウザやセキュリティソフトに止められる利用者向けに、
+        # 同じインストーラを zip に入れたものも置く。中身は exe 1つだけ（フォルダなし）。
+        # Windows 上で作るので、Mac で作ったときのような __MACOSX などは入らない
+        Compress-Archive -Path dist/Glance-Setup.exe -DestinationPath dist/Glance-Setup.zip -Force
+        Write-Host "zip 版を作成しました: Glance-Setup.zip"
+
+    # 5.8 リリース本文の組み立て
+    #     generate_release_notes が作るのは英語のコミット一覧で、利用者が最初に
+    #     読む文章としては不向き。日本語の案内を先頭に置き、自動生成の変更履歴は
+    #     その後ろへ回す（GitHub は渡した本文の後に追記する）。
+    #     docs/release-notes/<タグ>.md があれば、その手書きノートも差し込む。
+    - name: Compose release notes
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $version = $tag -replace '^v', ''
+        $installer = "Glance-Setup-$version.exe"
+
+        # 逐語ヒアストリング。バックティックや $ を PowerShell に解釈させない。
+        $template = @'
+        ## ダウンロード
+
+        **Glance-Setup.zip** をダウンロードし、展開してできた Glance-Setup.exe を実行してください。
+        下の Assets の一覧にあります。
+
+        いつでも最新版を直接ダウンロードできるリンク:
+        https://github.com/panpanpanda7/Glance/releases/latest/download/Glance-Setup.zip
+
+        zip を使えない場合は **__INSTALLER__** を直接ダウンロードして実行することもできます。
+        ただし、ブラウザやセキュリティソフトの設定によっては、ダウンロードが途中で止まることがあります。
+        ほかのファイルは自動更新用のため、ダウンロードは不要です。
+
+        ## はじめての方へ
+
+        インストール手順、動作条件、「WindowsによってPCが保護されました」と表示された
+        ときの操作方法は、README に書いてあります。
+        https://github.com/panpanpanda7/Glance
+
+        初回起動時に、AI モデル（約1.9GB）をダウンロードするか確認します。
+        ダウンロード中の進み具合は音声でお知らせしますので、完了までそのままお待ちください。
+        使い方は、Glance の画面で F1 キーを押すと開く説明書にまとめています。
+        '@
+
+        $body = $template.Replace('__INSTALLER__', $installer)
+
+        $notePath = "docs/release-notes/$tag.md"
+        if (Test-Path $notePath) {
+          Write-Host "手書きのリリースノートを読み込みます: $notePath"
+          $body = $body + [Environment]::NewLine + [Environment]::NewLine + (Get-Content $notePath -Raw)
+        } else {
+          Write-Host "手書きのリリースノートはありません: $notePath"
+        }
+
+        # BOM 付きで書くとリリース本文の先頭に余計な文字が出る。
+        # -Encoding utf8 の意味が PowerShell 5.1 と 7 で違うので、明示的に書く。
+        $outPath = Join-Path $PWD 'release-body.md'
+        [System.IO.File]::WriteAllText($outPath, $body, (New-Object System.Text.UTF8Encoding $false))
+        Write-Host "---------- release-body.md ----------"
+        Get-Content release-body.md
+
+    # 6. 生成されたインストーラーをリリースにアップロード
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          glance-pyapp/electron/dist/*.exe
+          glance-pyapp/electron/dist/*.zip
+          glance-pyapp/electron/dist/latest.yml
+        body_path: release-body.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true

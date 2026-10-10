@@ -1,0 +1,11 @@
+# Models（大容量ファイル）
+glance-pyapp/python-backend/models/*
+!glance-pyapp/python-backend/models/*.py
+
+# CI が展開する llama.cpp のバイナリ
+glance-pyapp/python-backend/llama-cpp-bin/
+
+.DS_Store
+*.pyc
+__pycache__/
+glance-pyapp/python-backend/venv/
