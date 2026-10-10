@@ -372,6 +372,8 @@ jobs:
     #     （colorama など Windows でだけ入る依存も、ここで拾われる）
     - name: Generate third-party notices
       run: python glance-pyapp/scripts/generate_third_party_notices.py
+      env:
+        PYTHONUTF8: '1'  # 日本語の出力で cp1252 のコンソールに落ちないように
 
     # 4. ビルド済みPythonバックエンドをElectronのリソースにコピー
     - name: Copy Python backend to Electron resources

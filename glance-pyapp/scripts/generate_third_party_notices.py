@@ -135,7 +135,8 @@ def python_runtime():
 
 def npm_packages():
     out = subprocess.run([shutil.which("npm"), "ls", "--omit=dev", "--all", "--json", "--long"],
-                         cwd=ELECTRON_DIR, capture_output=True, text=True, check=True).stdout
+                         cwd=ELECTRON_DIR, capture_output=True, text=True, encoding="utf-8",
+                         check=True).stdout
     found = {}
 
     def walk(deps):
