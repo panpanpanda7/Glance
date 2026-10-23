@@ -181,6 +181,30 @@ def _resolve_request_image(data):
     return image_id, entry
 
 
+def _power_save_cpu_options(cpu_opts):
+    """
+    省電力モード（Glance の設定。環境変数 GLANCE_POWER_SAVE=1 で渡る）なら、
+    llama-server が使うスレッドを半分（最低2）にする
+
+    低スペック機で「推論のたびにファンが大きく回る」との声を受けたもの。
+    同時に回るコアが半分になり、発熱の山が下がる。出力文は変わらない
+    （温度0で、スレッド数を変えても同一の文になることを計測で確認済み）。
+    解像度は下げない。672px では文字の多い画面で読み間違いが出たため。
+    """
+    if os.environ.get('GLANCE_POWER_SAVE') != '1':
+        return cpu_opts
+    base = cpu_opts.get('threads')
+    if not base:
+        try:
+            import psutil
+            base = psutil.cpu_count(logical=False) or 4
+        except Exception:
+            base = 4
+    threads = max(2, base // 2)
+    print(f"   🌙 省電力モード: スレッド数 {base} → {threads}")
+    return {**cpu_opts, 'threads': threads}
+
+
 def _select_prompt(prompt_type, question):
     """プロンプト種別に応じた単段プロンプトと maxTokens を返す"""
     if prompt_type == 'overview':
@@ -683,7 +707,7 @@ def initialize_system():
             print(f"      自動起動: {auto_start_server}")
             print(f"      コンテキストサイズ: {ctx_size}")
             
-            cpu_opts = active_model_config.get('cpu') or {}
+            cpu_opts = _power_save_cpu_options(active_model_config.get('cpu') or {})
             current_model = Qwen3VLServerModel(
                 model_path=model_path,
                 mmproj_path=mmproj_path,
