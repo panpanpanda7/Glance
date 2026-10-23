@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 設定
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  // 省電力モード。確かめたうえで AI を再起動する。{ changed, settings } が返る
+  setPowerSave: (enabled) => ipcRenderer.invoke('set-power-save', enabled),
 
   // ホットキー設定
   getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),

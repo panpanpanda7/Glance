@@ -510,8 +510,11 @@ window.electronAPI.onAnalysisResult((data) => {
 window.electronAPI.onStatusUpdate((data) => {
   console.log('Status update:', data);
 
-  // ★IPCイベントを受信したらポーリングを停止
-  if (statusCheckInterval) {
+  // エラーが届いたらポーリングを停止する。それ以外では止めない。
+  // AI を再起動したとき（省電力モードの切り替え）は main.js から「起動中」
+  // 「待機中」が届くが、ここで止めると「準備が完了しました」を伝える前に
+  // ポーリングが終わってしまう。ポーリングは準備完了を見たら自分で止まる
+  if (data.status === 'error' && statusCheckInterval) {
     clearInterval(statusCheckInterval);
     statusCheckInterval = null;
     console.log('✅ ステータスポーリングを停止しました（IPCイベント受信）');
@@ -816,6 +819,7 @@ feedbackForm.addEventListener('submit', async (event) => {
 //   Ctrl+Home … 履歴の先頭へ
 //   Ctrl+End  … 最新の説明へ
 //   Alt+↑ / Alt+↓ … 1件ずつ移動（移動先の時刻と本文が読み上げられる）
+//   ↑ / ↓          … 説明を選んでいるときは、これでも1件ずつ移動
 //   Enter / Space  … 選択中の説明を読み上げ
 //   Esc            … 読み上げを停止
 // ==========================================
@@ -891,6 +895,17 @@ document.addEventListener('keydown', (event) => {
   }
 
   const focused = event.target.closest ? event.target.closest('.msg') : null;
+
+  // 説明を選んでいるときは、修飾キーなしの上下矢印でも1件ずつ移動する。
+  // NVDA がフォーカスモードのときは矢印キーがここへ届き、何も起きないと
+  // 報告があった（ブラウズモードでは NVDA が矢印キーを使うので、ここへは来ない）
+  const plain = !event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey;
+  if (focused && plain && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault();
+    moveFocus(event.key === 'ArrowUp' ? -1 : 1);
+    return;
+  }
+
   if (focused && (event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
     stopSpeech();
@@ -904,6 +919,8 @@ document.addEventListener('keydown', (event) => {
 
 let lastStatus = "";
 let statusCheckInterval = null; // ポーリング用のインターバルID
+let loadingStartedAt = 0;       // AIの起動（loading_model）が始まった時刻
+let loadingNotifiedMinutes = 0; // 起動中の経過を何分まで伝えたか
 
 // ==========================================
 // 初回ダウンロードの進捗案内
@@ -1048,6 +1065,17 @@ function handleDownloadStatus(data) {
   }
 }
 
+// 起動の進み具合を2秒ごとに確かめ、準備完了で止める。AI を再起動したとき
+// （省電力モードの切り替え）もここから始め直し、起動中の案内を流す
+function startStatusPolling() {
+  if (statusCheckInterval) clearInterval(statusCheckInterval);
+  lastStatus = "";
+  loadingStartedAt = 0;
+  loadingNotifiedMinutes = 0;
+  statusCheckInterval = setInterval(checkSystemStatus, 2000);
+  checkSystemStatus();
+}
+
 async function checkSystemStatus() {
   const backendUrl = await window.electronAPI.getBackendUrl();
   if (!backendUrl) return;   // ポートがまだ決まっていない
@@ -1071,11 +1099,21 @@ async function checkSystemStatus() {
         if (lastStatus !== 'loading_model' && statusCheckInterval) {
           const wasDownloading = lastStatus === 'downloading';
           const message = wasDownloading
-            ? "ダウンロードが完了しました。AIを起動しています。この処理には1分ほどかかります。"
+            ? "ダウンロードが完了しました。AIを起動しています。数分かかることがあります。"
             : "AIを起動しています。";
           enqueueSpeech(message);
           announce(message);
           resetDownloadNarration();
+          loadingStartedAt = Date.now();
+          loadingNotifiedMinutes = 0;
+        } else if (statusCheckInterval && loadingStartedAt) {
+          // 古いパソコンでは数分かかる。その間が起動音だけだと、
+          // 止まっていないか不安になると報告があったため、1分ごとに伝える
+          const minutes = Math.floor((Date.now() - loadingStartedAt) / 60000);
+          if (minutes > loadingNotifiedMinutes) {
+            loadingNotifiedMinutes = minutes;
+            notifyProgress(`AIを起動しています。${minutes}分経ちました。もう少しお待ちください。`);
+          }
         }
 
       } else if (data.status === 'ready') {
@@ -1084,7 +1122,9 @@ async function checkSystemStatus() {
         statusDot.className = 'status-dot idle';
         // ポーリングが有効な場合のみTTS読み上げ（エラー後の遅延読み上げを防止）
         if (lastStatus !== 'ready' && statusCheckInterval) {
+          // スクリーンリーダーに任せている人にも届くよう、live region にも出す
           speakNow("準備が完了しました。Glanceを使用できます。");
+          announce("準備が完了しました。Glanceを使用できます。");
         }
 
         // ★準備完了したらポーリングを停止（main.jsのIPCステータスに任せる）
@@ -1298,9 +1338,11 @@ function applyTtsSettings(settings) {
   if (ttsAutoRead) ttsAutoRead.checked = speech.autoRead;
 }
 
+// 読み上げ方法はここでは保存しない。NVDA が動いていて自動で 'off' に
+// なっているときに速度などを変えると、'off' が保存され、NVDA を使わない日も
+// Glance が黙ったままになるため。読み上げ方法は選んだときだけ保存する
 async function persistTtsSettings() {
   appSettings = await window.electronAPI.saveSettings({
-    ttsMode: speech.mode,
     ttsRate: speech.rate,
     ttsVoiceURI: speech.voiceURI,
     ttsAutoRead: speech.autoRead
@@ -1311,7 +1353,8 @@ if (ttsModeSelect) {
   ttsModeSelect.addEventListener('change', () => {
     speech.mode = ttsModeSelect.value;
     stopSpeech();
-    persistTtsSettings();
+    window.electronAPI.saveSettings({ ttsMode: speech.mode, ttsModeChosen: true })
+      .then(saved => { appSettings = saved; });
     const label = ttsModeSelect.options[ttsModeSelect.selectedIndex].textContent;
     if (ttsStatus) ttsStatus.textContent = `読み上げ方法を「${label}」にしました。`;
     if (speech.mode !== 'off') speakNow('読み上げ方法を変更しました。');
@@ -1384,6 +1427,47 @@ async function initSettings() {
   }
   applyTtsSettings(appSettings);
   populateVoiceOptions();
+  if (alwaysOnTopCheckbox) alwaysOnTopCheckbox.checked = !!appSettings.alwaysOnTop;
+  if (powerSaveCheckbox) powerSaveCheckbox.checked = !!appSettings.powerSave;
+
+  // NVDA が動いていたので、Glance からは喋らずに NVDA へ任せている。
+  // 黙って切り替えると、Glance の声が出ない理由が分からないため伝える
+  if (appSettings.ttsModeAuto) {
+    const message =
+      'NVDA が動いているため、読み上げは NVDA に任せます。' +
+      'Glance の声で読ませたいときは、設定の「読み上げ方法」で選んでください。';
+    announce(message);
+    if (ttsStatus) ttsStatus.textContent = message;
+  }
+}
+
+// 省電力モード。切り替えると AI を再起動するので、main.js が先に確かめる。
+// やめたときはチェックを元に戻す
+const powerSaveCheckbox = document.getElementById('power-save');
+const powerSaveStatus = document.getElementById('power-save-status');
+if (powerSaveCheckbox) {
+  powerSaveCheckbox.addEventListener('change', async () => {
+    const wanted = powerSaveCheckbox.checked;
+    const result = await window.electronAPI.setPowerSave(wanted);
+    if (!result.changed) {
+      powerSaveCheckbox.checked = !wanted;
+      return;
+    }
+    appSettings = result.settings;
+    const message = wanted
+      ? '省電力モードにしました。AIを再起動しています。'
+      : '省電力モードをやめました。AIを再起動しています。';
+    if (powerSaveStatus) powerSaveStatus.textContent = message;
+    notifyProgress(message);
+    startStatusPolling();
+  });
+}
+
+const alwaysOnTopCheckbox = document.getElementById('always-on-top');
+if (alwaysOnTopCheckbox) {
+  alwaysOnTopCheckbox.addEventListener('change', async () => {
+    appSettings = await window.electronAPI.saveSettings({ alwaysOnTop: alwaysOnTopCheckbox.checked });
+  });
 }
 
 if (imageSizeSelect) {
@@ -1403,12 +1487,8 @@ window.addEventListener('DOMContentLoaded', () => {
     startupLogs.textContent = 'ログ待機中...';
   }
 
-  // 設定を読み込み
-  initSettings();
+  // 設定を読み込んでから状態の確認を始める。先に始めると、NVDA に任せる
+  // 設定が届く前に、起動中の案内を Glance の声で読み上げてしまう
   initHotkeys();
-
-  // 2秒ごとにシステムステータスをチェック
-  statusCheckInterval = setInterval(checkSystemStatus, 2000);
-  // 即座に1回チェック
-  checkSystemStatus();
+  initSettings().finally(startStatusPolling);
 });

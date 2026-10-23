@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Tray, Menu, nativeImage, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import net from 'net';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -183,6 +183,46 @@ function getCaptureLongEdge() {
   return Number.isFinite(target) ? target * 2 : 1792;
 }
 
+// キャプチャ除外を切り替えてから、画面の合成に反映されるまで待つ時間
+const CAPTURE_EXCLUDE_SETTLE_MS = 100;
+
+/**
+ * 撮る間だけ Glance の窓をキャプチャ対象から外す
+ *
+ * 外さないと、対象アプリの上に被った Glance が写り込み、「見えている画面と
+ * 違うものを説明する」原因になる。ただし常に外しておくと、Windows の拡大鏡
+ * （レンズモード）でも Glance が透明になって見えなくなると報告があった。
+ * 拡大鏡もキャプチャと同じ仕組みで画面を読むため。そこで撮る間だけ外す。
+ *
+ * @param {() => Promise<T>} capture
+ * @returns {Promise<T>}
+ * @template T
+ */
+async function withGlanceExcludedFromCapture(capture) {
+  const windows = [mainWindow, questionOverlayWindow]
+    .filter(win => win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+  if (!windows.length) return capture();
+
+  const setExcluded = (excluded) => {
+    for (const win of windows) {
+      if (win.isDestroyed()) continue;
+      try {
+        win.setContentProtection(excluded);
+      } catch (error) {
+        console.warn('⚠️ キャプチャ除外を切り替えられませんでした:', error.message);
+      }
+    }
+  };
+
+  setExcluded(true);
+  try {
+    await new Promise(resolve => setTimeout(resolve, CAPTURE_EXCLUDE_SETTLE_MS));
+    return await capture();
+  } finally {
+    setExcluded(false);
+  }
+}
+
 /**
  * 画面をキャプチャして currentImage を更新する
  *
@@ -192,7 +232,8 @@ function getCaptureLongEdge() {
  * @returns {Promise<object>} currentImage
  */
 async function captureAndStore() {
-  const base64 = await captureFullScreen({ maxLongEdge: getCaptureLongEdge() });
+  const base64 = await withGlanceExcludedFromCapture(
+    () => captureFullScreen({ maxLongEdge: getCaptureLongEdge() }));
   const id = crypto.createHash('sha256').update(Buffer.from(base64, 'base64')).digest('hex');
   currentImage = { id, base64, capturedAt: Date.now(), registered: false };
   return currentImage;
@@ -278,10 +319,22 @@ const SETTINGS_DEFAULTS = {
   // 'system' は OS 標準の音声合成（PowerShell/say 経由）、'off' は
   // スクリーンリーダーに任せて Glance からは喋らない
   ttsMode: 'builtin',
+  // 利用者が設定画面で読み上げ方法を選んだか。選んでいないうちは、NVDA が
+  // 動いていれば 'off' として扱う（effectiveSettings）。NVDA の利用者から、
+  // Glance の声と NVDA の声が重なると報告があったため
+  ttsModeChosen: false,
   ttsRate: 1.5,
   ttsVoiceURI: '',
   ttsAutoRead: true,
   hotkeys: { ...HOTKEY_DEFAULTS },
+  // Glance の画面を常に手前に出すか。最前面に固定すると Alt+Tab で
+  // ほかのアプリに切り替えても Glance が上に残り、下のアプリが使いにくいと
+  // 報告があったため、既定は固定しない
+  alwaysOnTop: false,
+  // 省電力モード。AI が使うコアを半分にして、ファンの音を抑える（app.py の
+  // _power_save_cpu_options）。コア数は AI の起動時にしか決められないため、
+  // 切り替えると AI を再起動する（set-power-save）
+  powerSave: false,
   // バックエンドのポート。別のソフトが既定のポートを使っていて移ったときだけ
   // 入る。次の起動からはこのポートを最初に試す（resolveBackendPort）
   backendPort: null
@@ -321,6 +374,37 @@ function saveSettings(settings) {
 }
 
 let appSettings = loadSettings();
+
+/**
+ * NVDA が動いているか（Windows のみ）
+ *
+ * 起動時に一度だけ調べる。tasklist が使えないときは「動いていない」とみなし、
+ * これまでどおり Glance が読み上げる。
+ *
+ * @returns {Promise<boolean>}
+ */
+function detectNvda() {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  return new Promise(resolve => {
+    execFile('tasklist', ['/FI', 'IMAGENAME eq nvda.exe', '/NH'],
+      { windowsHide: true, timeout: 5000 },
+      (error, stdout) => resolve(!error && /nvda\.exe/i.test(stdout || '')));
+  });
+}
+
+const nvdaRunning = detectNvda();
+
+/**
+ * 画面側へ渡す設定。読み上げ方法を選んでいないうちに NVDA が動いていれば、
+ * 'off'（スクリーンリーダーに任せる）として渡す。保存値は書き換えないので、
+ * NVDA を使わない日は元どおり Glance が読み上げる。
+ */
+async function effectiveSettings() {
+  const autoOff = !appSettings.ttsModeChosen && await nvdaRunning;
+  return autoOff
+    ? { ...appSettings, ttsMode: 'off', ttsModeAuto: true }
+    : { ...appSettings, ttsModeAuto: false };
+}
 
 /**
  * そのポートで何かが接続を受け付けているか
@@ -522,7 +606,11 @@ async function startPythonBackend() {
   }
   
   // 環境変数を設定（既存の環境変数を継承しつつ、PYTHONIOENCODINGを追加）
-  const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+  const env = {
+    ...process.env,
+    PYTHONIOENCODING: 'utf-8',
+    GLANCE_POWER_SAVE: appSettings.powerSave ? '1' : '0'
+  };
   
   // 親プロセスのPIDを引数として渡す（孤児プロセス防止）
   args.push(`--parent-pid=${process.pid}`);
@@ -551,12 +639,13 @@ function spawnPythonBackend(executablePath, args, cwd, env) {
   pythonExitCode = null;
   lastBackendDetail = null;
 
-  pythonProcess = spawn(executablePath, args, {
+  const proc = spawn(executablePath, args, {
     stdio: 'pipe', // 'inherit'から'pipe'に変更して出力をキャプチャ
     cwd: cwd,
     env: env, // 環境変数を指定
     windowsHide: true // コンソール窓を出さない（出ると利用者の作業中の窓から焦点を奪う）
   });
+  pythonProcess = proc;
   
   // 標準出力をキャプチャしてレンダラーに送信
   pythonProcess.stdout.on('data', (data) => {
@@ -600,6 +689,10 @@ function spawnPythonBackend(executablePath, args, cwd, env) {
   
   pythonProcess.on('exit', (code) => {
     console.log(`⚠️  Pythonプロセスが終了しました (code: ${code})`);
+    // AI を再起動したとき（省電力モードの切り替え）、止めた古いプロセスの終了が
+    // 新しいプロセスの起動後に届くことがある。それを新しい方の終了と取り違えると、
+    // 起動待ちが「起動直後に終了した」として失敗する
+    if (pythonProcess && pythonProcess !== proc) return;
     if (mainWindow) {
       mainWindow.webContents.send('log-message', `[INFO] Pythonプロセスが終了しました (終了コード: ${code})`);
     }
@@ -761,7 +854,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 600,
     height: 700,
-    alwaysOnTop: true,
+    alwaysOnTop: !!appSettings.alwaysOnTop,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -778,16 +871,6 @@ function createWindow() {
       mainWindow.webContents.send('status-update', { status: 'idle', message: '待機中' });
     }
   });
-
-  // Glance 自身をキャプチャ対象から外す。
-  // 常に最前面に出るため、対象アプリの上に被った状態で写り込み、
-  // 「見えている画面と違うものを説明する」原因になっていた。
-  // Windows 10 2004+ と macOS では、画面には見えたままキャプチャからだけ除外される。
-  try {
-    mainWindow.setContentProtection(true);
-  } catch (error) {
-    console.warn('⚠️ キャプチャ除外を設定できませんでした:', error.message);
-  }
 
   // 画面側で起きたエラーをログへ流す。開発者ツールを開けない利用者の環境で
   // 不具合が起きたとき、report-bug に情報が残らないと原因を追えないため。
@@ -839,13 +922,6 @@ function createQuestionOverlayWindow() {
   });
 
   questionOverlayWindow.loadFile('question-overlay.html');
-
-  // 質問入力欄もキャプチャに写り込ませない
-  try {
-    questionOverlayWindow.setContentProtection(true);
-  } catch (error) {
-    console.warn('⚠️ オーバーレイのキャプチャ除外を設定できませんでした:', error.message);
-  }
 
   questionOverlayWindow.on('closed', () => {
     questionOverlayWindow = null;
@@ -1575,23 +1651,11 @@ async function confirmFirstModelDownload() {
   return response === 0;
 }
 
-app.whenReady().then(async () => {
-  // 二重起動側は何もしない（ホットキーもバックエンドも奪わせない）
-  if (!gotSingleInstanceLock) return;
-
-  console.log('🚀 Glance（Python API版）を起動中...');
-
-  if (!await confirmFirstModelDownload()) {
-    console.log('ℹ️  初回のモデルダウンロードを見送ったため終了します');
-    app.quit();
-    return;
-  }
-
-  createWindow();
-  createTray();
-  registerHotkeys();
-
-  // Pythonバックエンドを起動
+/**
+ * バックエンドを起動し、起動中・完了・失敗を画面と音で伝える
+ * （起動時と、省電力モードの切り替えで AI を再起動するときに使う）
+ */
+async function bootPythonBackend() {
   try {
     if (mainWindow) {
       mainWindow.webContents.send('status-update', {
@@ -1634,6 +1698,26 @@ app.whenReady().then(async () => {
       });
     }
   }
+}
+
+app.whenReady().then(async () => {
+  // 二重起動側は何もしない（ホットキーもバックエンドも奪わせない）
+  if (!gotSingleInstanceLock) return;
+
+  console.log('🚀 Glance（Python API版）を起動中...');
+
+  if (!await confirmFirstModelDownload()) {
+    console.log('ℹ️  初回のモデルダウンロードを見送ったため終了します');
+    app.quit();
+    return;
+  }
+
+  createWindow();
+  createTray();
+  registerHotkeys();
+
+  // Pythonバックエンドを起動
+  await bootPythonBackend();
 
   // 自動更新の確認（インストーラ版のみ）
   await setupAutoUpdater();
@@ -1667,6 +1751,7 @@ async function killPythonBackend() {
 
   const proc = pythonProcess;
   pythonProcess = null; // 重複実行防止
+  isPythonReady = false;  // 止めている間にホットキーで推論を始めさせない
 
   console.log('🐍 Pythonバックエンドの終了処理を開始...');
 
@@ -1835,7 +1920,7 @@ ipcMain.handle('send-feedback', async (_event, { message, contact, includeDiagno
         appVersion: app.getVersion(),
         isPackaged: app.isPackaged,
         backendState: isPythonReady ? '準備完了' : '起動していない',
-        ttsMode: appSettings.ttsMode,
+        ttsMode: (await effectiveSettings()).ttsMode,
         imageMaxSize: appSettings.imageMaxSize,
         hotkeys: appSettings.hotkeys
       })
@@ -1924,13 +2009,46 @@ ipcMain.on('overlay-question-cancel', () => {
 // 設定取得
 ipcMain.handle('get-settings', () => {
   appSettings = loadSettings();
-  return appSettings;
+  return effectiveSettings();
 });
 
 // 設定保存
 ipcMain.handle('save-settings', (_event, settings) => {
   appSettings = saveSettings(settings);
-  return appSettings;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(!!appSettings.alwaysOnTop);
+  }
+  return effectiveSettings();
+});
+
+// 省電力モードの切り替え。コア数は AI の起動時にしか決められないので、
+// 切り替えると AI を再起動する。数分使えなくなるため、切り替える前に伝えて
+// 確かめる。やめたときは何も変えない
+ipcMain.handle('set-power-save', async (_event, enabled) => {
+  const on = !!enabled;
+  if (on === !!appSettings.powerSave) return { changed: false };
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: on ? '省電力モードにする' : '省電力モードをやめる',
+    message: on
+      ? 'AIが使うCPUを半分にして、ファンの音を抑えます。説明が出るまでの時間は長くなります。'
+      : 'AIがCPUをすべて使うように戻します。説明は速くなり、ファンの音は大きくなります。',
+    detail: '切り替えるとAIを再起動します。数分間、Glance は使えません。',
+    buttons: ['切り替える', 'やめる'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  if (response !== 0) return { changed: false };
+
+  appSettings = saveSettings({ powerSave: on });
+  stopAll();
+  // 古いバックエンドを止め切ってから返す。先に返すと、画面側の状態確認が
+  // 止まる前のバックエンドから「準備完了」を受け取ってしまう
+  await killPythonBackend();
+  bootPythonBackend();
+  return { changed: true, settings: await effectiveSettings() };
 });
 
 // TTSのみ停止（推論は継続。読み上げボタンの停止用）

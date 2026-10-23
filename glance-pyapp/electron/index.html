@@ -743,6 +743,28 @@
           <p id="hotkey-status" class="advanced-hint" role="status" aria-live="polite"></p>
         </fieldset>
         <fieldset class="hotkey-settings">
+          <legend>表示</legend>
+          <div class="settings-row">
+            <label for="always-on-top">Glanceの画面を常に手前に表示する</label>
+            <input type="checkbox" id="always-on-top">
+          </div>
+        </fieldset>
+
+        <fieldset class="hotkey-settings">
+          <legend>省電力</legend>
+          <!-- 補足はチェックの前に置く。切り替えると AI を再起動することを、選ぶ前に知らせる -->
+          <p class="advanced-hint" id="power-save-hint">
+            AIが使うCPUを半分にして、ファンの音を抑えます。説明が出るまでの時間は長くなります。
+            切り替えるとAIを再起動するため、数分間 Glance は使えません。
+          </p>
+          <div class="settings-row">
+            <label for="power-save">省電力モード</label>
+            <input type="checkbox" id="power-save" aria-describedby="power-save-hint">
+          </div>
+          <p id="power-save-status" class="advanced-hint" role="status" aria-live="polite"></p>
+        </fieldset>
+
+        <fieldset class="hotkey-settings">
           <legend>画像</legend>
           <div class="settings-row">
             <label for="image-size-select">画像解像度</label>
